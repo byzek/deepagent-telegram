@@ -1,0 +1,70 @@
+# SearXNG configuration for deepagent-telegram.
+# Inherits upstream defaults; only overrides what we care about.
+# Docs: https://docs.searxng.org/admin/settings/index.html
+
+use_default_settings: true
+
+general:
+  instance_name: "deepagent-search"
+  # This is a private, internal instance; no need to advertise it.
+  privacypolicy_url: false
+  contact_url: false
+
+server:
+  # Placeholder — the official image replaces this with $SEARXNG_SECRET on first
+  # boot. If yours doesn't, set a real value here (openssl rand -hex 32).
+  secret_key: "ultrasecretkey"
+  # Bot limiter is meant for public instances. This one is only reachable by the
+  # agent on the internal network, so disable it to avoid throttling ourselves.
+  limiter: false
+  image_proxy: true
+  method: "GET"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  # JSON is required for the agent's web_search tool to parse results.
+  formats:
+    - html
+    - json
+
+# Cache / rate-limit backend (the `valkey` service). Older SearXNG builds call
+# this section `redis:` — rename if your image rejects `valkey:`.
+valkey:
+  url: redis://valkey:6379/0
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 20.0
+  pool_connections: 100
+  pool_maxsize: 20
+
+  # -------------------------------------------------------------------------
+  # OPTIONAL: route engine traffic through the `tor` container.
+  #
+  # Uncomment to send ALL upstream requests over Tor. Honest warning: many big
+  # engines (Google, Bing) block Tor exit nodes, so this often yields FEWER
+  # results and MORE CAPTCHAs, not fewer. The reliable CAPTCHA-proof path is the
+  # Brave Search API fallback (brave_search tool). Enable this only for engines
+  # that tolerate Tor, or when your own IP is the thing getting blocked.
+  # -------------------------------------------------------------------------
+  # proxies:
+  #   all://:
+  #     - socks5h://tor:9050
+
+# Trim the default engine set to fast, Tor-tolerant, mostly-CAPTCHA-free
+# sources, and disable the ones that CAPTCHA aggressively. Tune to taste.
+engines:
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: startpage
+    disabled: true   # frequent CAPTCHAs; off by default

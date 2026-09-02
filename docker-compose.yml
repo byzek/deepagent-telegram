@@ -1,0 +1,194 @@
+# =============================================================================
+# deepagent-telegram — full self-hosted stack
+#
+# Services:
+#   agent     Deep Agent + Telegram long-polling front-end (no inbound ports)
+#   postgres  Checkpointer (conversation state) + Store (memories/skills)
+#   valkey    Redis-compatible cache/limiter backing SearXNG
+#   searxng   Private metasearch engine (primary web search)
+#   tor       SOCKS5 proxy for optional CAPTCHA/rate-limit evasion
+#   sandbox   Isolated code-execution service driven by the agent
+#
+# Bring it up with:  docker compose up -d --build
+# =============================================================================
+
+x-restart: &restart
+  restart: unless-stopped
+
+networks:
+  # Everything shares one user-defined bridge. Nothing is published to the host
+  # except the optional SearXNG debug UI (bound to localhost only).
+  agentnet:
+    driver: bridge
+
+volumes:
+  pgdata:
+  valkeydata:
+  sandbox_workspace:
+  qdrantdata:
+
+services:
+  # ---------------------------------------------------------------------------
+  # Postgres — durable checkpointer + long-term store
+  # ---------------------------------------------------------------------------
+  postgres:
+    # pgvector-enabled Postgres: required for the default (pgvector) memory
+    # backend's semantic search. Plain postgres:16 will NOT work.
+    image: pgvector/pgvector:pg16
+    <<: *restart
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [agentnet]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+
+  # ---------------------------------------------------------------------------
+  # Valkey — SearXNG limiter/cache backend
+  # ---------------------------------------------------------------------------
+  valkey:
+    image: valkey/valkey:8-alpine
+    <<: *restart
+    command: ["valkey-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - valkeydata:/data
+    networks: [agentnet]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  # ---------------------------------------------------------------------------
+  # Tor — SOCKS5 proxy (used only if you enable proxies in searxng/settings.yml)
+  # ---------------------------------------------------------------------------
+  tor:
+    image: dperson/torproxy:latest
+    <<: *restart
+    networks: [agentnet]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf --socks5-hostname localhost:9050 https://check.torproject.org/api/ip || exit 1"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # SearXNG — primary private web search
+  # ---------------------------------------------------------------------------
+  searxng:
+    image: searxng/searxng:latest
+    <<: *restart
+    depends_on:
+      valkey:
+        condition: service_healthy
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET}
+      # Base URL is internal-only; the value below just silences a warning.
+      SEARXNG_BASE_URL: http://localhost:8080/
+    volumes:
+      # Read-write so the image entrypoint can inject SEARXNG_SECRET into
+      # settings.yml on first boot. See README if your image doesn't auto-inject.
+      - ./searxng:/etc/searxng
+    networks: [agentnet]
+    ports:
+      # Debug UI on the host, localhost-only. Comment out to fully seal it.
+      - "127.0.0.1:8888:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    cap_add: ["CHOWN", "SETGID", "SETUID"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  # ---------------------------------------------------------------------------
+  # Sandbox — isolated shell/code execution, reachable only by the agent
+  # ---------------------------------------------------------------------------
+  sandbox:
+    build: ./sandbox
+    <<: *restart
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN}
+      SANDBOX_TIMEOUT: ${SANDBOX_TIMEOUT:-120}
+    volumes:
+      - sandbox_workspace:/workspace
+    networks: [agentnet]
+    # Hardening: no host access, dropped caps, read-only root, writable tmp only.
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Qdrant — OPTIONAL memory backend. Only started with `--profile qdrant`.
+  # Used when MEMORY_BACKEND=qdrant. The default (pgvector) needs nothing here.
+  # ---------------------------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    <<: *restart
+    profiles: ["qdrant"]
+    volumes:
+      - qdrantdata:/qdrant/storage
+    networks: [agentnet]
+    security_opt: ["no-new-privileges:true"]
+
+  # ---------------------------------------------------------------------------
+  # Dashboard — local metrics UI (read-only over Postgres). localhost-only.
+  # ---------------------------------------------------------------------------
+  dashboard:
+    build: ./dashboard
+    <<: *restart
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+      MEMORY_BACKEND: ${MEMORY_BACKEND:-pgvector}
+    networks: [agentnet]
+    ports:
+      - "127.0.0.1:8899:8000"
+    security_opt: ["no-new-privileges:true"]
+
+  # ---------------------------------------------------------------------------
+  # Agent — the brain: Deep Agent + chat front-ends (Telegram/Discord)
+  # ---------------------------------------------------------------------------
+  agent:
+    build: ./agent
+    <<: *restart
+    depends_on:
+      postgres:
+        condition: service_healthy
+      searxng:
+        condition: service_healthy
+      sandbox:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Recompute the DB URL here so the app doesn't have to.
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+    # Makes `host.docker.internal` resolve on Linux (already works on Docker
+    # Desktop for Mac/Windows). This is how the agent reaches your LLM.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [agentnet]
+    security_opt: ["no-new-privileges:true"]
