@@ -47,8 +47,12 @@ CREATE INDEX IF NOT EXISTS metrics_net_ts_idx ON metrics_net (ts);
 
 
 async def ensure_metrics_tables(pool) -> None:
+    # The pool runs with prepare_threshold=0, so every statement goes through the
+    # extended/prepared protocol — which allows only ONE command per execute().
+    # Run each DDL statement separately instead of the whole script at once.
     async with pool.connection() as conn:
-        await conn.execute(DDL)
+        for stmt in filter(None, (s.strip() for s in DDL.split(";"))):
+            await conn.execute(stmt)
     log.info("Metrics tables ready.")
 
 
