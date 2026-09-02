@@ -10,13 +10,14 @@ import logging
 from dataclasses import dataclass
 
 from deepagents import create_deep_agent
-from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
+from deepagents.backends import CompositeBackend, StoreBackend
 from langchain.agents.middleware import TodoListMiddleware
 from langchain_openai import ChatOpenAI
 
+from app.backend_sandbox import SandboxBackend
 from app.config import settings
 from app.prompt import system_prompt
-from app.tools import build_memory_tools, build_sandbox_tools, build_search_tools
+from app.tools import build_memory_tools, build_search_tools
 
 log = logging.getLogger(__name__)
 
@@ -40,10 +41,12 @@ def _build_model() -> ChatOpenAI:
 
 
 def _build_backend() -> CompositeBackend:
-    """Thread-scoped scratch by default; `/memories/` and `/skills/` persist in
-    the Postgres store, namespaced per user so each person's data is private."""
+    """Default backend is sandbox-capable: virtual scratch FS in-graph PLUS the
+    built-in `execute` tool wired to the isolated sandbox container. `/memories/`
+    and `/skills/` persist in the Postgres store, namespaced per user so each
+    person's data is private."""
     return CompositeBackend(
-        default=StateBackend(),
+        default=SandboxBackend(),
         routes={
             "/memories/": StoreBackend(
                 namespace=lambda rt: ("memories", rt.context.user_id),
@@ -58,9 +61,11 @@ def _build_backend() -> CompositeBackend:
 def build_agent(checkpointer, store):
     """Return a compiled Deep Agent graph wired to durable persistence."""
     model = _build_model()
+    # NOTE: no custom `execute` tool here — deepagents provides a built-in
+    # `execute` that now works because our default backend is sandbox-capable.
+    # A second tool named `execute` would collide with it.
     tools = [
         *build_search_tools(),
-        *build_sandbox_tools(),
         *build_memory_tools(),
     ]
 
