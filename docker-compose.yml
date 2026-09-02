@@ -56,6 +56,11 @@ services:
   valkey:
     image: valkey/valkey:8-alpine
     <<: *restart
+    # Run directly as the image's non-root `valkey` user. The entrypoint only
+    # attempts a setpriv/setuid privilege-drop when started as root; doing that
+    # under `cap_drop: ALL` (no CAP_SETUID/SETGID) is what caused the
+    # "setpriv: setresuid failed" crash loop. Starting non-root skips it.
+    user: "valkey"
     command: ["valkey-server", "--save", "60", "1", "--appendonly", "no"]
     volumes:
       - valkeydata:/data
