@@ -363,8 +363,17 @@ person on Telegram and Discord has separate memory unless you deliberately share
 
 A read-only metrics UI at **http://127.0.0.1:8899** (localhost-only). It shows:
 
+- **Savings vs cloud**: prices your actual local token volume against a cloud
+  model you'd otherwise pay for, and reports the cost you avoided. Tune the
+  comparison with `CLOUD_COMPARE_MODEL`, `CLOUD_INPUT_PER_1M`,
+  `CLOUD_OUTPUT_PER_1M` (defaults track a GPT-4o-class model). Honest framing:
+  local compute is treated as ~free (electricity you're already paying), so
+  "savings" = the cloud bill you didn't get.
+- **Usage over time**: a 30-day chart of daily prompt/completion tokens (stacked
+  bars) and prompts/day, so you can see trends, not just lifetime totals.
 - **Per user** and **per memory backend** and **per model**: prompt count,
-  prompt/completion/total tokens, and average tokens/sec.
+  prompt/completion/total tokens, average tokens/sec, avg tokens/prompt, and the
+  cloud cost that volume would have incurred.
 - **Network**: the agent container's bytes + packets rx/tx, both totals (since
   container start) and current per-second rates, with a live sparkline.
 
@@ -404,7 +413,7 @@ All variables live in `.env` (see `.env.example` for the annotated list).
 Highlights:
 
 - **LLM**: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_TEMPERATURE`,
-  `LLM_MAX_TOKENS`, `LLM_REQUEST_TIMEOUT`.
+  `LLM_MAX_TOKENS`, `LLM_STREAM_IDLE_TIMEOUT`, `LLM_HARD_TIMEOUT`.
 - **Telegram**: `TELEGRAM_BOT_TOKEN`, `ALLOWED_TELEGRAM_USER_IDS`.
 - **Postgres**: `POSTGRES_HOST/PORT/DB/USER/PASSWORD` (compose derives
   `DATABASE_URL`).
@@ -466,6 +475,16 @@ import `ToolRuntime` from `langchain.tools` (per the deepagents docs). If your
 installed versions moved it, `docker compose build --no-cache agent`; if it
 persists, tell me your `deepagents`/`langchain` versions and I'll adjust the
 import.
+
+**Turns time out even though the model is still working.** Timeouts are
+activity-based, not total-duration-based: the agent streams and only gives up if
+the model goes *silent*. Two knobs, and you rarely touch either:
+`LLM_STREAM_IDLE_TIMEOUT` (default 300s — max gap with no new output, which only
+needs to cover time-to-first-token / prompt prefill, not total length) and
+`LLM_HARD_TIMEOUT` (default 3600s — absolute per-turn ceiling). A slow box keeps
+working as long as tokens flow; set either to `0` to disable it. The Telegram
+adapter also keeps a live "typing…" indicator during long turns and retries
+transient send failures, so slow-but-working turns no longer look dead.
 
 **Dashboard empty.** It only has data after the agent has answered at least one
 message (token rows) and run long enough to take two network samples.

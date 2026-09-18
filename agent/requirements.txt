@@ -22,5 +22,9 @@ qdrant-client>=1.11,<2.0
 python-telegram-bot>=21.6,<22.0
 discord.py>=2.4,<3.0
 
+# Standard Markdown -> Telegram MarkdownV2 conversion (pure Python; Rust wheel
+# via pyromark, no Node). Lets the agent's CommonMark render correctly on TG.
+telegramify-markdown>=0.5,<1.0
+
 # HTTP for search + sandbox tools
 httpx>=0.27,<0.29

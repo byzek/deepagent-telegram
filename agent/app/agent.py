@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+import httpx
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, StoreBackend
 from langchain.agents.middleware import TodoListMiddleware
@@ -30,13 +31,26 @@ class Context:
 
 
 def _build_model() -> ChatOpenAI:
+    # Stream so the HTTP read timeout acts as an INACTIVITY timeout: httpx's
+    # `read` bound is the max gap between received chunks, so as long as the
+    # server keeps emitting tokens the request never times out — no matter how
+    # long the full generation takes. A stalled/dead stream trips it after
+    # `llm_stream_idle_timeout` seconds. (0 => wait indefinitely between chunks;
+    # the absolute ceiling is enforced separately in dispatch.handle_turn.)
+    idle = settings.llm_stream_idle_timeout or None
     return ChatOpenAI(
         model=settings.llm_model,
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
-        timeout=settings.llm_request_timeout,
+        streaming=True,
+        # Keep token usage flowing under streaming so the dashboard stays accurate.
+        stream_usage=True,
+        # Don't auto-retry: a genuine stall shouldn't silently restart (and
+        # duplicate) a long generation; a working stream never trips the timeout.
+        max_retries=0,
+        timeout=httpx.Timeout(connect=30.0, read=idle, write=30.0, pool=30.0),
     )
 
 

@@ -169,6 +169,10 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
       MEMORY_BACKEND: ${MEMORY_BACKEND:-pgvector}
+      # Cloud model to price your local token volume against (savings panel).
+      CLOUD_COMPARE_MODEL: ${CLOUD_COMPARE_MODEL:-gpt-4o}
+      CLOUD_INPUT_PER_1M: ${CLOUD_INPUT_PER_1M:-2.50}
+      CLOUD_OUTPUT_PER_1M: ${CLOUD_OUTPUT_PER_1M:-10.00}
     networks: [agentnet]
     ports:
       - "127.0.0.1:8899:8000"

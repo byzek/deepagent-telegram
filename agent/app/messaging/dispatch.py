@@ -6,6 +6,7 @@ with platform I/O (and their own message-length limits via `chunk`).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from app import threads
@@ -43,10 +44,16 @@ async def handle_turn(ctx, platform: str, raw_user_id, chat_id, text: str) -> st
         "recursion_limit": 1000,
         "callbacks": [metrics],
     }
-    result = await ctx.agent.ainvoke(
-        {"messages": [{"role": "user", "content": text}]},
-        config=config,
-        context=Context(user_id=user_id),
+    # The per-token idle timeout (on the model) keeps us waiting while the LLM is
+    # actually producing output; this is the absolute safety ceiling for the
+    # whole turn regardless of activity. 0 disables it (wait indefinitely).
+    result = await asyncio.wait_for(
+        ctx.agent.ainvoke(
+            {"messages": [{"role": "user", "content": text}]},
+            config=config,
+            context=Context(user_id=user_id),
+        ),
+        timeout=settings.llm_hard_timeout or None,
     )
     reply = extract_text(result)
 

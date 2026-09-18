@@ -20,6 +20,17 @@ from psycopg_pool import AsyncConnectionPool
 DATABASE_URL = os.environ["DATABASE_URL"]
 MEMORY_BACKEND = os.environ.get("MEMORY_BACKEND", "pgvector")
 
+# --- Cost comparison (self-hosted vs cloud) ---------------------------------
+# The whole point of running your own model is not paying per token. To make
+# that legible, we price the exact token volume you've spent locally against a
+# representative cloud model and call the difference your savings (local compute
+# is treated as ~free — it's electricity you're already paying for). All three
+# knobs are configurable so you can compare against whatever cloud model you'd
+# otherwise use. Defaults track a GPT-4o-class model ($/1M tokens).
+CLOUD_MODEL = os.environ.get("CLOUD_COMPARE_MODEL", "gpt-4o")
+CLOUD_INPUT_PER_1M = float(os.environ.get("CLOUD_INPUT_PER_1M", "2.50"))
+CLOUD_OUTPUT_PER_1M = float(os.environ.get("CLOUD_OUTPUT_PER_1M", "10.00"))
+
 _pool: AsyncConnectionPool | None = None
 
 
@@ -58,6 +69,22 @@ async def _rows(sql: str, params=()):
 
 def _num(v):
     return float(v) if v is not None else 0.0
+
+
+def _cloud_cost(prompt_tokens, completion_tokens) -> float:
+    """What this token volume would have cost on the configured cloud model."""
+    return (
+        _num(prompt_tokens) / 1_000_000 * CLOUD_INPUT_PER_1M
+        + _num(completion_tokens) / 1_000_000 * CLOUD_OUTPUT_PER_1M
+    )
+
+
+def _augment(row: dict) -> dict:
+    """Add derived cost/usage fields to an aggregate row (in place)."""
+    prompts = _num(row.get("prompts"))
+    row["cloud_cost"] = _cloud_cost(row.get("prompt_tokens"), row.get("completion_tokens"))
+    row["avg_tokens_per_prompt"] = _num(row.get("total_tokens")) / prompts if prompts else 0.0
+    return row
 
 
 async def _network():
@@ -104,26 +131,58 @@ async def _network():
     }
 
 
+async def _daily():
+    rows = await _rows(
+        f"""
+        SELECT date_trunc('day', ts) AS day, {_AGG}
+        FROM metrics_llm
+        WHERE ts > now() - interval '30 days'
+        GROUP BY 1 ORDER BY 1
+        """
+    )
+    out = []
+    for r in rows:
+        r = _augment(r)
+        r["day"] = r["day"].date().isoformat()
+        out.append(r)
+    return out
+
+
 @app.get("/api/stats")
 async def stats():
-    totals = (await _rows(f"SELECT {_AGG} FROM metrics_llm"))[0]
-    per_user = await _rows(
-        f"SELECT user_id, {_AGG} FROM metrics_llm GROUP BY user_id ORDER BY total_tokens DESC"
-    )
-    per_backend = await _rows(
-        f"SELECT memory_backend, {_AGG} FROM metrics_llm GROUP BY memory_backend ORDER BY total_tokens DESC"
-    )
-    per_model = await _rows(
-        f"SELECT model, {_AGG} FROM metrics_llm GROUP BY model ORDER BY total_tokens DESC"
-    )
+    totals = _augment((await _rows(f"SELECT {_AGG} FROM metrics_llm"))[0])
+    per_user = [
+        _augment(r)
+        for r in await _rows(
+            f"SELECT user_id, {_AGG} FROM metrics_llm GROUP BY user_id ORDER BY total_tokens DESC"
+        )
+    ]
+    per_backend = [
+        _augment(r)
+        for r in await _rows(
+            f"SELECT memory_backend, {_AGG} FROM metrics_llm GROUP BY memory_backend ORDER BY total_tokens DESC"
+        )
+    ]
+    per_model = [
+        _augment(r)
+        for r in await _rows(
+            f"SELECT model, {_AGG} FROM metrics_llm GROUP BY model ORDER BY total_tokens DESC"
+        )
+    ]
     return JSONResponse(
         {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "memory_backend_current": MEMORY_BACKEND,
+            "pricing": {
+                "cloud_model": CLOUD_MODEL,
+                "input_per_1m": CLOUD_INPUT_PER_1M,
+                "output_per_1m": CLOUD_OUTPUT_PER_1M,
+            },
             "totals": totals,
             "per_user": per_user,
             "per_backend": per_backend,
             "per_model": per_model,
+            "daily": await _daily(),
             "network": await _network(),
         }
     )
@@ -157,7 +216,10 @@ _HTML = """<!doctype html>
   .kpi .v{font-size:22px;font-weight:700}
   .kpi .l{color:var(--mut);font-size:12px}
   .full{grid-column:1/-1}
+  .hero{background:linear-gradient(135deg,#12261a,#161b22);border-color:#238636}
+  .hero .save{font-size:44px;font-weight:800;color:var(--acc2);line-height:1.1}
   svg{width:100%;height:80px;display:block}
+  #usage{height:140px}
   .lg{display:flex;gap:16px;font-size:12px;color:var(--mut);margin-top:6px}
   .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle}
   code{color:var(--acc)}
@@ -169,9 +231,26 @@ _HTML = """<!doctype html>
   <span class="mut">updated <span id="updated">…</span></span>
 </header>
 <main>
+  <div class="panel full hero">
+    <h2>Estimated savings vs cloud</h2>
+    <div class="save"><span id="savings">$0.00</span></div>
+    <div class="mut" id="savings_sub">…</div>
+    <div class="kpis" id="costkpis" style="margin-top:14px"></div>
+  </div>
+
   <div class="panel full">
     <h2>Totals</h2>
     <div class="kpis" id="totals"></div>
+  </div>
+
+  <div class="panel full">
+    <h2>Usage over time (last 30 days)</h2>
+    <svg id="usage" viewBox="0 0 600 140" preserveAspectRatio="none"></svg>
+    <div class="lg">
+      <span><span class="sw" style="background:#58a6ff"></span>prompt tokens</span>
+      <span><span class="sw" style="background:#3fb950"></span>completion tokens</span>
+      <span><span class="sw" style="background:#d29922"></span>prompts/day</span>
+    </div>
   </div>
 
   <div class="panel full">
@@ -192,8 +271,35 @@ _HTML = """<!doctype html>
 <script>
 const fmtInt = n => Math.round(n).toLocaleString();
 const fmtF = n => (Math.round(n*10)/10).toLocaleString();
+function fmtUsd(n){n=+n||0;if(n>0&&n<0.01)return '<$0.01';return '$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
 function bytes(n){const u=['B','KB','MB','GB','TB'];let i=0;n=+n||0;while(n>=1024&&i<u.length-1){n/=1024;i++}return (Math.round(n*10)/10)+' '+u[i];}
 function kpi(label,val){return `<div class="kpi"><div class="v">${val}</div><div class="l">${label}</div></div>`;}
+
+function usageChart(daily){
+  const svg=document.getElementById('usage');
+  const W=600,H=140,pad=6,axis=16;
+  if(!daily.length){svg.innerHTML='';return;}
+  const maxTok=Math.max(1,...daily.map(d=>+d.total_tokens));
+  const maxP=Math.max(1,...daily.map(d=>+d.prompts));
+  const n=daily.length, bw=(W-2*pad)/n;
+  const yTok=v=>(H-axis)-(v/maxTok)*(H-axis-pad);
+  const yP=v=>(H-axis)-(v/maxP)*(H-axis-pad);
+  let s='';
+  daily.forEach((d,i)=>{
+    const x=pad+i*bw, w=Math.max(1,bw*0.72);
+    const pt=+d.prompt_tokens, ct=+d.completion_tokens, tt=pt+ct||1;
+    const ph=((H-axis)-yTok(tt)), hp=ph*(pt/tt), hc=ph*(ct/tt);
+    s+=`<rect x="${x.toFixed(1)}" y="${yTok(tt).toFixed(1)}" width="${w.toFixed(1)}" height="${hp.toFixed(1)}" fill="#58a6ff"/>`;
+    s+=`<rect x="${x.toFixed(1)}" y="${(yTok(tt)+hp).toFixed(1)}" width="${w.toFixed(1)}" height="${hc.toFixed(1)}" fill="#3fb950"/>`;
+  });
+  const px=i=>pad+i*bw+bw*0.36;
+  s+='<path d="'+daily.map((d,i)=>(i?'L':'M')+px(i).toFixed(1)+' '+yP(+d.prompts).toFixed(1)).join(' ')+'" fill="none" stroke="#d29922" stroke-width="1.5"/>';
+  if(daily.length){
+    s+=`<text x="${pad}" y="${H-4}" fill="#8b949e" font-size="9">${daily[0].day}</text>`;
+    s+=`<text x="${W-pad}" y="${H-4}" fill="#8b949e" font-size="9" text-anchor="end">${daily[daily.length-1].day}</text>`;
+  }
+  svg.innerHTML=s;
+}
 
 function table(el, rows, cols){
   const head = '<tr>'+cols.map(c=>`<th>${c.h}</th>`).join('')+'</tr>';
@@ -218,11 +324,25 @@ async function refresh(){
     const s = await (await fetch('/api/stats')).json();
     document.getElementById('backend').textContent = s.memory_backend_current;
     document.getElementById('updated').textContent = new Date(s.generated_at).toLocaleTimeString();
-    const t=s.totals;
+    const t=s.totals, p=s.pricing;
+
+    // Savings hero: cloud cost avoided by running your own model.
+    document.getElementById('savings').textContent = fmtUsd(t.cloud_cost);
+    document.getElementById('savings_sub').innerHTML =
+      `vs <code>${p.cloud_model}</code> at $${fmtF(p.input_per_1m)}/1M in · $${fmtF(p.output_per_1m)}/1M out — `
+      +`your ${fmtInt(t.total_tokens)} tokens would have cost that on cloud. Local compute treated as ~free; edit CLOUD_* env to retune.`;
+    document.getElementById('costkpis').innerHTML =
+      kpi('est. cloud cost',fmtUsd(t.cloud_cost))
+      +kpi('cost / prompt',fmtUsd(t.prompts?t.cloud_cost/t.prompts:0))
+      +kpi('avg tokens/prompt',fmtInt(t.avg_tokens_per_prompt))
+      +kpi('LLM hours',fmtF(t.llm_seconds/3600));
+
     document.getElementById('totals').innerHTML =
       kpi('prompts',fmtInt(t.prompts))+kpi('prompt tokens',fmtInt(t.prompt_tokens))
       +kpi('completion tokens',fmtInt(t.completion_tokens))+kpi('total tokens',fmtInt(t.total_tokens))
       +kpi('avg tokens/sec',fmtF(t.avg_tokens_per_sec));
+
+    usageChart(s.daily||[]);
     const n=s.network;
     document.getElementById('netkpis').innerHTML =
       kpi('down / s',bytes(n.rate.rx_bps))+kpi('up / s',bytes(n.rate.tx_bps))
@@ -233,7 +353,8 @@ async function refresh(){
 
     const cols=[{h:'',k:'__k',f:v=>v??'—'},{h:'prompts',k:'prompts',f:fmtInt},
       {h:'prompt tok',k:'prompt_tokens',f:fmtInt},{h:'compl tok',k:'completion_tokens',f:fmtInt},
-      {h:'total tok',k:'total_tokens',f:fmtInt},{h:'avg tok/s',k:'avg_tokens_per_sec',f:fmtF}];
+      {h:'total tok',k:'total_tokens',f:fmtInt},{h:'avg tok/s',k:'avg_tokens_per_sec',f:fmtF},
+      {h:'saved',k:'cloud_cost',f:fmtUsd}];
     const withKey=(rows,key)=>rows.map(r=>({...r,__k:r[key]}));
     table(document.getElementById('per_user'), withKey(s.per_user,'user_id'), cols);
     table(document.getElementById('per_backend'), withKey(s.per_backend,'memory_backend'), cols);

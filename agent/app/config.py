@@ -33,7 +33,18 @@ class Settings:
     llm_api_key: str = os.environ.get("LLM_API_KEY", "") or "not-needed"
     llm_temperature: float = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
     llm_max_tokens: int = int(os.environ.get("LLM_MAX_TOKENS", "4096"))
-    llm_request_timeout: float = float(os.environ.get("LLM_REQUEST_TIMEOUT", "120"))
+    # Timeouts are activity-based, not total-duration-based: the model streams,
+    # and we only give up if it goes SILENT for too long. That way a slow box
+    # keeps working as long as tokens (or prompt-prefill) are actually flowing,
+    # and you don't have to retune a total timer per model / context size.
+    #
+    # llm_stream_idle_timeout: max seconds with NO new output before we bail.
+    #   Only needs to cover the longest single silent gap (usually prompt
+    #   prefill / time-to-first-token), NOT total generation length.
+    # llm_hard_timeout: absolute ceiling for one whole turn, as a safety net.
+    #   Set either to 0 to disable that limit.
+    llm_stream_idle_timeout: float = float(os.environ.get("LLM_STREAM_IDLE_TIMEOUT", "300"))
+    llm_hard_timeout: float = float(os.environ.get("LLM_HARD_TIMEOUT", "3600"))
 
     # --- Embeddings (for semantic memory) ------------------------------------
     # Default to the same private endpoint as the chat model.
