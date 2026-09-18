@@ -175,7 +175,7 @@ services:
       CLOUD_OUTPUT_PER_1M: ${CLOUD_OUTPUT_PER_1M:-10.00}
     networks: [agentnet]
     ports:
-      - "127.0.0.1:8899:8000"
+      - "8899:8000"
     security_opt: ["no-new-privileges:true"]
 
   # ---------------------------------------------------------------------------
