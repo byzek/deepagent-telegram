@@ -88,6 +88,11 @@ class Settings:
     searxng_url: str = os.environ.get("SEARXNG_URL", "http://searxng:8080").rstrip("/")
     brave_api_key: str = os.environ.get("BRAVE_API_KEY", "")
 
+    # --- Skills --------------------------------------------------------------
+    # Optional: raises GitHub API rate limits (60->5000/hr) when installing
+    # skills from repos. Not required for public repos at low volume.
+    github_token: str = os.environ.get("GITHUB_TOKEN", "")
+
     # --- Sandbox -------------------------------------------------------------
     sandbox_url: str = os.environ.get("SANDBOX_URL", "http://sandbox:8000").rstrip("/")
     sandbox_token: str = os.environ.get("SANDBOX_TOKEN", "")

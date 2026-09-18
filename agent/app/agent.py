@@ -18,7 +18,7 @@ from langchain_openai import ChatOpenAI
 from app.backend_sandbox import SandboxBackend
 from app.config import settings
 from app.prompt import system_prompt
-from app.tools import build_memory_tools, build_search_tools
+from app.tools import build_memory_tools, build_search_tools, build_skill_tools
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +81,7 @@ def build_agent(checkpointer, store):
     tools = [
         *build_search_tools(),
         *build_memory_tools(),
+        *build_skill_tools(),
     ]
 
     agent = create_deep_agent(
