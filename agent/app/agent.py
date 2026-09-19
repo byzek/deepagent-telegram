@@ -55,10 +55,10 @@ def _build_model() -> ChatOpenAI:
 
 
 def _build_backend() -> CompositeBackend:
-    """Default backend is sandbox-capable: virtual scratch FS in-graph PLUS the
-    built-in `execute` tool wired to the isolated sandbox container. `/memories/`
-    and `/skills/` persist in the Postgres store, namespaced per user so each
-    person's data is private."""
+    """Default backend is the sandbox: the file tools AND the built-in `execute`
+    tool share the isolated container's real `/workspace` (one filesystem, no
+    in-graph scratch). `/memories/` and `/skills/` are routed to the Postgres
+    store, namespaced per user so each person's data is private and durable."""
     return CompositeBackend(
         default=SandboxBackend(),
         routes={
