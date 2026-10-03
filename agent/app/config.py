@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from zoneinfo import ZoneInfo
 
 
 def _split_ids(raw: str) -> frozenset[int]:
@@ -102,11 +103,19 @@ class Settings:
     net_sample_interval: float = float(os.environ.get("NET_SAMPLE_INTERVAL", "5"))
     net_metrics_retention_hours: int = int(os.environ.get("NET_METRICS_RETENTION_HOURS", "72"))
 
+    # --- Scheduler -----------------------------------------------------------
+    # IANA zone used for naive times the agent schedules ("08:00") and for
+    # stepping recurring jobs in wall-clock time.
+    scheduler_timezone: str = os.environ.get("SCHEDULER_TIMEZONE", "UTC")
+
     # --- Misc ----------------------------------------------------------------
     log_level: str = os.environ.get("LOG_LEVEL", "INFO").upper()
     agent_name: str = os.environ.get("AGENT_NAME", "deepagent")
 
     # --- Derived helpers -----------------------------------------------------
+    def scheduler_tz(self) -> ZoneInfo:
+        return ZoneInfo(self.scheduler_timezone)
+
     def enabled_platforms(self) -> list[str]:
         """Which chat platforms to start. Explicit list wins; otherwise any
         platform with a token configured is auto-enabled."""

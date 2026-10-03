@@ -3,6 +3,7 @@ alongside other adapters in one event loop."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 
 import telegramify_markdown
@@ -77,12 +78,14 @@ async def _reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Fresh conversation started.")
 
 
-async def _send(message: Message, text: str, *, parse_mode=None) -> None:
+async def _send(target, text: str, *, parse_mode=None) -> None:
     """Send one message, retrying transient Telegram network hiccups instead of
-    letting a flaky send bubble up as a failed turn."""
+    letting a flaky send bubble up as a failed turn. `target` is a Message to
+    reply to, or a send coroutine (e.g. bot.send_message bound to a chat)."""
+    send = target.reply_text if isinstance(target, Message) else target
     for attempt in range(3):
         try:
-            await message.reply_text(text, parse_mode=parse_mode)
+            await send(text, parse_mode=parse_mode)
             return
         except RetryAfter as exc:
             await asyncio.sleep(getattr(exc, "retry_after", 1) + 0.5)
@@ -92,7 +95,7 @@ async def _send(message: Message, text: str, *, parse_mode=None) -> None:
             await asyncio.sleep(1.0 * (attempt + 1))
 
 
-async def _reply_markdown(message: Message, text: str) -> None:
+async def _reply_markdown(message, text: str) -> None:
     """Render the agent's Markdown as Telegram MarkdownV2, converting per chunk
     so each message is self-contained. If Telegram rejects the entities (or the
     message is too long), fall back to sending that chunk as plain text."""
@@ -184,6 +187,11 @@ async def start(ctx) -> Application:
     log.info("Telegram adapter polling. Authorized: %s",
              sorted(settings.allowed_telegram_user_ids))
     return app
+
+
+async def send(app: Application, chat_id, text: str) -> None:
+    """Deliver an unprompted message (e.g. a scheduled task's result)."""
+    await _reply_markdown(functools.partial(app.bot.send_message, int(chat_id)), text)
 
 
 async def stop(app: Application) -> None:

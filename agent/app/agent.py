@@ -18,16 +18,23 @@ from langchain_openai import ChatOpenAI
 from app.backend_sandbox import SandboxBackend
 from app.config import settings
 from app.prompt import system_prompt
-from app.tools import build_memory_tools, build_search_tools, build_skill_tools
+from app.tools import (
+    build_memory_tools,
+    build_schedule_tools,
+    build_search_tools,
+    build_skill_tools,
+)
 
 log = logging.getLogger(__name__)
 
 
 @dataclass
 class Context:
-    """Per-run context. `user_id` scopes this user's private memory/skills."""
+    """Per-run context. `user_id` scopes this user's private memory/skills;
+    `chat_id` is where scheduled tasks created during this run will reply."""
 
     user_id: str
+    chat_id: str = ""
 
 
 def _build_model() -> ChatOpenAI:
@@ -72,7 +79,7 @@ def _build_backend() -> CompositeBackend:
     )
 
 
-def build_agent(checkpointer, store):
+def build_agent(checkpointer, store, pool):
     """Return a compiled Deep Agent graph wired to durable persistence."""
     model = _build_model()
     # NOTE: no custom `execute` tool here — deepagents provides a built-in
@@ -82,6 +89,7 @@ def build_agent(checkpointer, store):
         *build_search_tools(),
         *build_memory_tools(),
         *build_skill_tools(),
+        *build_schedule_tools(pool),
     ]
 
     agent = create_deep_agent(

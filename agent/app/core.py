@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from app import threads
+from app import scheduler, threads
 from app.agent import build_agent
 from app.config import settings
 from app.embeddings import build_embeddings
@@ -57,13 +57,14 @@ async def build_app_context() -> AppContext:
     persistence = await build_persistence(settings.database_url)
     await ensure_metrics_tables(persistence.pool)
     await threads.ensure_table(persistence.pool)
+    await scheduler.ensure_table(persistence.pool)
 
     embeddings = build_embeddings()
     mem = await build_memory_store(persistence.pool, embeddings)
 
     await seed_users(mem.store, _seed_user_ids())
 
-    agent = build_agent(persistence.checkpointer, mem.store)
+    agent = build_agent(persistence.checkpointer, mem.store, persistence.pool)
 
     log.info(
         "%s ready. platforms=%s memory_backend=%s",

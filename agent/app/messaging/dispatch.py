@@ -51,7 +51,7 @@ async def handle_turn(ctx, platform: str, raw_user_id, chat_id, text: str) -> st
         ctx.agent.ainvoke(
             {"messages": [{"role": "user", "content": text}]},
             config=config,
-            context=Context(user_id=user_id),
+            context=Context(user_id=user_id, chat_id=str(chat_id)),
         ),
         timeout=settings.llm_hard_timeout or None,
     )

@@ -3,12 +3,14 @@ plus the background network sampler in one event loop."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import signal
 
 from app.config import settings
 from app.core import build_app_context
 from app.metrics import network_sampler
+from app.scheduler import scheduler_loop
 
 
 def _configure_logging() -> None:
@@ -45,6 +47,12 @@ async def amain() -> None:
 
     log.info("Started adapters: %s", platforms)
 
+    senders = {
+        module.PLATFORM: functools.partial(module.send, handle)
+        for module, handle in started
+    }
+    sched = asyncio.create_task(scheduler_loop(ctx, senders))
+
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -57,6 +65,7 @@ async def amain() -> None:
     log.info("Shutting down…")
 
     sampler.cancel()
+    sched.cancel()
     for module, handle in started:
         await module.stop(handle)
     await ctx.close()

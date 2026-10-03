@@ -91,6 +91,14 @@ async def start(ctx):
     return client, task
 
 
+async def send(handle, chat_id, text: str) -> None:
+    """Deliver an unprompted message (e.g. a scheduled task's result)."""
+    client, _ = handle
+    channel = client.get_channel(int(chat_id)) or await client.fetch_channel(int(chat_id))
+    for part in chunk(text, _LIMIT):
+        await channel.send(part)
+
+
 async def stop(handle) -> None:
     client, task = handle
     try:
