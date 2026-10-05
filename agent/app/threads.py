@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS chat_threads (
 
 async def ensure_table(pool) -> None:
     async with pool.connection() as conn:
-        await conn.execute(DDL)
+        await conn.execute(DDL, prepare=False)
 
 
 async def thread_id(pool, platform: str, chat_id) -> str:

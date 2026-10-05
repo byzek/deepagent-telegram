@@ -70,8 +70,10 @@ def next_run(prev: datetime, every_minutes: int | None, now: datetime,
 
 
 async def ensure_table(pool) -> None:
+    # prepare=False: the pool prepares everything, and prepared statements
+    # reject multi-command scripts.
     async with pool.connection() as conn:
-        await conn.execute(DDL)
+        await conn.execute(DDL, prepare=False)
 
 
 async def add_job(pool, platform: str, user_id: str, chat_id: str, prompt: str,
