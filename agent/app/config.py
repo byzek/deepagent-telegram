@@ -34,6 +34,10 @@ class Settings:
     llm_api_key: str = os.environ.get("LLM_API_KEY", "") or "not-needed"
     llm_temperature: float = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
     llm_max_tokens: int = int(os.environ.get("LLM_MAX_TOKENS", "4096"))
+    # Whether the model accepts image input. Off by default: a text-only server
+    # 500s on image blocks (e.g. `read_file` on a .png), so they're replaced with
+    # a text placeholder instead.
+    llm_vision: bool = os.environ.get("LLM_VISION", "false").lower() in ("1", "true", "yes")
     # Timeouts are activity-based, not total-duration-based: the model streams,
     # and we only give up if it goes SILENT for too long. That way a slow box
     # keeps working as long as tokens (or prompt-prefill) are actually flowing,

@@ -58,6 +58,12 @@ def _build_model() -> ChatOpenAI:
         # duplicate) a long generation; a working stream never trips the timeout.
         max_retries=0,
         timeout=httpx.Timeout(connect=30.0, read=idle, write=30.0, pool=30.0),
+        # deepagents' UnsupportedContentMiddleware reads this to strip blocks the
+        # model can't take; with no profile it assumes everything is supported.
+        profile={
+            "image_inputs": settings.llm_vision,
+            "image_tool_message": settings.llm_vision,
+        },
     )
 
 
