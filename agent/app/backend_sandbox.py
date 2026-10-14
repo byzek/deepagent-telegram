@@ -108,7 +108,9 @@ class SandboxBackend(BaseSandbox):
     async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         try:
             async with httpx.AsyncClient(timeout=_client_timeout(timeout)) as client:
-                resp = await client.post(_url(), json={"command": command}, headers=_headers())
+                resp = await client.post(
+                    _url(), json={"command": command, "timeout": timeout}, headers=_headers()
+                )
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as exc:  # noqa: BLE001 - surface as tool output, never crash the turn
@@ -119,7 +121,9 @@ class SandboxBackend(BaseSandbox):
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         try:
             with httpx.Client(timeout=_client_timeout(timeout)) as client:
-                resp = client.post(_url(), json={"command": command}, headers=_headers())
+                resp = client.post(
+                    _url(), json={"command": command, "timeout": timeout}, headers=_headers()
+                )
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as exc:  # noqa: BLE001

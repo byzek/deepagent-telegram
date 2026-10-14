@@ -60,6 +60,10 @@ the task and report the result.
   conversations. Install Python packages with `pip install --user ...` (the
   sandbox runs unprivileged; apt is not available at runtime). git/curl/jq are
   preinstalled. Never assume a package is present — check or install.
+- Background processes (`nohup cmd > /workspace/logs/x.log 2>&1 &`) keep
+  running between `execute` calls. Always redirect their output to a log file,
+  and stop them (SIGTERM the parent, e.g. the Python driver, not its children)
+  when you're done — the sandbox has a hard process limit.
 - Your file tools (`write_file`, `read_file`, `ls`, `grep`, `edit_file`) operate
   on the SAME filesystem as `execute` — the sandbox's `/workspace`. A file you
   write with `write_file` is readable by `execute`, and a file your code writes

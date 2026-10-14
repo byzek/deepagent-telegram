@@ -17,6 +17,7 @@ import logging
 import os
 import signal
 import subprocess
+import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
@@ -24,44 +25,52 @@ log = logging.getLogger("sandbox")
 
 TOKEN = os.environ.get("SANDBOX_TOKEN", "")
 TIMEOUT = int(os.environ.get("SANDBOX_TIMEOUT", "120"))
+MAX_TIMEOUT = int(os.environ.get("SANDBOX_MAX_TIMEOUT", "3600"))
 WORKDIR = os.environ.get("SANDBOX_WORKDIR", "/workspace")
 MAX_OUTPUT = 60_000  # chars per stream returned to the model
 
 
-def _run(command: str) -> dict:
+def _read_clipped(f) -> str:
+    size = f.seek(0, os.SEEK_END)
+    f.seek(0)
+    s = f.read(MAX_OUTPUT).decode(errors="replace")
+    if size > MAX_OUTPUT:
+        s += f"\n...[truncated {size - MAX_OUTPUT} chars]"
+    return s
+
+
+def _run(command: str, timeout: int | None = None) -> dict:
+    timeout = min(timeout or TIMEOUT, MAX_TIMEOUT)
     os.makedirs(WORKDIR, exist_ok=True)
-    proc = subprocess.Popen(
-        command,
-        shell=True,
-        cwd=WORKDIR,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,  # own process group so we can kill children
-        env={**os.environ, "HOME": WORKDIR, "PIP_NO_INPUT": "1"},
-    )
-    timed_out = False
-    try:
-        stdout, stderr = proc.communicate(timeout=TIMEOUT)
-    except subprocess.TimeoutExpired:
-        timed_out = True
+    # Files, not pipes: a backgrounded process inheriting stdout must not keep
+    # us waiting after the shell itself has exited.
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=WORKDIR,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=err,
+            start_new_session=True,  # own process group so we can kill children
+            env={**os.environ, "HOME": WORKDIR, "PIP_NO_INPUT": "1"},
+        )
+        timed_out = False
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        stdout, stderr = proc.communicate()
-
-    def clip(s: str) -> str:
-        if s and len(s) > MAX_OUTPUT:
-            return s[:MAX_OUTPUT] + f"\n...[truncated {len(s) - MAX_OUTPUT} chars]"
-        return s or ""
-
-    return {
-        "exit_code": proc.returncode,
-        "stdout": clip(stdout),
-        "stderr": clip(stderr),
-        "timed_out": timed_out,
-    }
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+        return {
+            "exit_code": proc.returncode,
+            "stdout": _read_clipped(out),
+            "stderr": _read_clipped(err),
+            "timed_out": timed_out,
+        }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -93,12 +102,13 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             data = json.loads(self.rfile.read(length) or b"{}")
             command = data["command"]
-        except (ValueError, KeyError) as exc:
+            timeout = int(data["timeout"]) if data.get("timeout") else None
+        except (ValueError, KeyError, TypeError) as exc:
             self._json(400, {"error": f"bad request: {exc}"})
             return
 
-        log.info("execute: %s", command[:200])
-        self._json(200, _run(command))
+        log.info("execute (timeout=%s): %s", timeout, command[:200])
+        self._json(200, _run(command, timeout))
 
     def log_message(self, *args) -> None:  # silence default access logging
         pass

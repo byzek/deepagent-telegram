@@ -130,6 +130,9 @@ services:
     volumes:
       - sandbox_workspace:/workspace
     networks: [agentnet]
+    # tini as PID 1 reaps orphaned children; without it zombies pile up
+    # against pids_limit until the container is restarted.
+    init: true
     # Hardening: no host access, dropped caps, read-only root, writable tmp only.
     read_only: true
     tmpfs:
