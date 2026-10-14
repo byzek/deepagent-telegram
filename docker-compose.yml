@@ -126,6 +126,7 @@ services:
     environment:
       SANDBOX_TOKEN: ${SANDBOX_TOKEN}
       SANDBOX_TIMEOUT: ${SANDBOX_TIMEOUT:-120}
+      OP_SERVICE_ACCOUNT_TOKEN: ${OP_SERVICE_ACCOUNT_TOKEN}
     volumes:
       - sandbox_workspace:/workspace
     networks: [agentnet]
