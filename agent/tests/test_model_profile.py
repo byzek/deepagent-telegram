@@ -44,3 +44,10 @@ def test_vision_model_keeps_images(monkeypatch):
     model = agent._build_model()
     msg = _image_tool_message()
     assert UnsupportedContentMiddleware()._filter_message(msg, model=model) is msg
+
+
+def test_offloaded_artifacts_land_in_writable_workspace():
+    from deepagents.middleware.summarization import SummarizationMiddleware
+
+    mw = SummarizationMiddleware(model=agent._build_model(), backend=agent._build_backend())
+    assert mw._get_history_path("s") == "/workspace/conversation_history/s.md"

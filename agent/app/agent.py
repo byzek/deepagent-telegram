@@ -82,6 +82,9 @@ def _build_backend() -> CompositeBackend:
                 namespace=lambda rt: ("skills", rt.context.user_id),
             ),
         },
+        # Middleware offloads (conversation history, large tool results) go
+        # here; the sandbox root is read-only, only /workspace is writable.
+        artifacts_root="/workspace",
     )
 
 
