@@ -32,6 +32,10 @@ _LIMIT = 4096
 _CHUNK = 3500
 # Telegram's "typing…" indicator lasts ~5s; refresh a bit faster than that.
 _TYPING_REFRESH = 4.0
+# Longest side of the photo variant sent to the model. Telegram already keeps
+# downscaled copies (~1280 is the usual largest), so no local resizing needed.
+# Each image is also stored in the thread, so smaller keeps history cheaper.
+_PHOTO_MAX_SIDE = 1280
 
 
 def _authorized(update: Update) -> bool:
@@ -133,20 +137,34 @@ def _friendly_error(exc: Exception) -> str:
     return f"Something went wrong: {exc}"
 
 
-async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _authorized(update):
-        log.info("Ignoring Telegram message from %s", update.effective_user)
-        return
-    text = (update.message.text or "").strip()
-    if not text:
-        return
+async def _deliver(message, send_photo, reply) -> None:
+    """Send the reply text (skipped if the turn produced only images), then each
+    generated image as a photo."""
+    if reply.text or not reply.images:
+        await _reply_markdown(message, reply.text)
+    for data in reply.images:
+        await send_photo(photo=data)
 
+
+def pick_photo(sizes, max_side: int = _PHOTO_MAX_SIDE):
+    """The largest variant whose longest side fits `max_side`, else the
+    smallest one available."""
+    fits = [s for s in sizes if max(s.width, s.height) <= max_side]
+    if fits:
+        return max(fits, key=lambda s: s.width * s.height)
+    return min(sizes, key=lambda s: s.width * s.height)
+
+
+async def _run_turn(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                    text: str, images=()) -> None:
     ctx = _ctx(context)
     chat_id = update.effective_chat.id
     stop = asyncio.Event()
     typing = asyncio.create_task(_keep_typing(context.bot, chat_id, stop))
     try:
-        reply = await handle_turn(ctx, PLATFORM, update.effective_user.id, chat_id, text)
+        reply = await handle_turn(
+            ctx, PLATFORM, update.effective_user.id, chat_id, text, images=images
+        )
     except Exception as exc:  # noqa: BLE001
         log.exception("agent failed")
         await _send(update.message, _friendly_error(exc))
@@ -155,7 +173,30 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         stop.set()
         await typing
 
-    await _reply_markdown(update.message, reply)
+    await _deliver(update.message, update.message.reply_photo, reply)
+
+
+async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        log.info("Ignoring Telegram message from %s", update.effective_user)
+        return
+    text = (update.message.text or "").strip()
+    if not text:
+        return
+    await _run_turn(update, context, text)
+
+
+async def _on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        log.info("Ignoring Telegram photo from %s", update.effective_user)
+        return
+    if not settings.llm_vision:
+        await _send(update.message, "I can't see images right now (LLM_VISION is off).")
+        return
+    size = pick_photo(update.message.photo)
+    file = await context.bot.get_file(size.file_id)
+    data = bytes(await file.download_as_bytearray())
+    await _run_turn(update, context, (update.message.caption or "").strip(), [data])
 
 
 def _build(ctx) -> Application:
@@ -176,6 +217,7 @@ def _build(ctx) -> Application:
     app.add_handler(CommandHandler("whoami", _whoami))
     app.add_handler(CommandHandler("reset", _reset))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _on_message))
+    app.add_handler(MessageHandler(filters.PHOTO, _on_photo))
     return app
 
 
@@ -189,9 +231,13 @@ async def start(ctx) -> Application:
     return app
 
 
-async def send(app: Application, chat_id, text: str) -> None:
-    """Deliver an unprompted message (e.g. a scheduled task's result)."""
-    await _reply_markdown(functools.partial(app.bot.send_message, int(chat_id)), text)
+async def send(app: Application, chat_id, reply) -> None:
+    """Deliver an unprompted reply (e.g. a scheduled task's result)."""
+    await _deliver(
+        functools.partial(app.bot.send_message, int(chat_id)),
+        functools.partial(app.bot.send_photo, int(chat_id)),
+        reply,
+    )
 
 
 async def stop(app: Application) -> None:

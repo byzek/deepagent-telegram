@@ -7,6 +7,7 @@ Developer Portal (see README).
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 
 import discord
@@ -79,8 +80,15 @@ class _Client(discord.Client):
             log.exception("agent failed")
             await message.channel.send(f"Something went wrong: {exc}")
             return
-        for part in chunk(reply, _LIMIT):
-            await message.channel.send(part)
+        await _deliver(message.channel, reply)
+
+
+async def _deliver(channel, reply) -> None:
+    if reply.text or not reply.images:
+        for part in chunk(reply.text, _LIMIT):
+            await channel.send(part)
+    for i, data in enumerate(reply.images):
+        await channel.send(file=discord.File(io.BytesIO(data), filename=f"image-{i + 1}.jpg"))
 
 
 async def start(ctx):
@@ -91,12 +99,11 @@ async def start(ctx):
     return client, task
 
 
-async def send(handle, chat_id, text: str) -> None:
-    """Deliver an unprompted message (e.g. a scheduled task's result)."""
+async def send(handle, chat_id, reply) -> None:
+    """Deliver an unprompted reply (e.g. a scheduled task's result)."""
     client, _ = handle
     channel = client.get_channel(int(chat_id)) or await client.fetch_channel(int(chat_id))
-    for part in chunk(text, _LIMIT):
-        await channel.send(part)
+    await _deliver(channel, reply)
 
 
 async def stop(handle) -> None:

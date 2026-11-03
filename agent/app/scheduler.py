@@ -130,7 +130,7 @@ async def _claim_due(pool, now: datetime, tz: tzinfo) -> list[tuple]:
 
 
 async def _fire(ctx, senders: dict, job: tuple) -> None:
-    from app.messaging.dispatch import handle_turn
+    from app.messaging.dispatch import Reply, handle_turn
 
     job_id, platform, user_id, chat_id, prompt, _, every = job
     send = senders.get(platform)
@@ -147,12 +147,12 @@ async def _fire(ctx, senders: dict, job: tuple) -> None:
         reply = await handle_turn(ctx, platform, user_id, chat_id, text)
     except Exception as exc:  # noqa: BLE001
         log.exception("scheduled job #%s failed", job_id)
-        reply = f"Scheduled task #{job_id} failed: {exc}"
+        reply = Reply(f"Scheduled task #{job_id} failed: {exc}")
     await send(chat_id, reply)
 
 
 async def scheduler_loop(ctx, senders: dict) -> None:
-    """Poll for due jobs forever. `senders` maps platform -> async (chat_id, text)."""
+    """Poll for due jobs forever. `senders` maps platform -> async (chat_id, Reply)."""
     tz = settings.scheduler_tz()
     running: set[asyncio.Task] = set()
     while True:

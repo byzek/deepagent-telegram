@@ -82,23 +82,32 @@ def _extract_tokens(response) -> tuple[int, int, str | None]:
 
 class TurnMetrics(AsyncCallbackHandler):
     """One instance per user turn. Accumulates pure LLM generation time + tokens
-    across every model call the agent makes (main agent, tool loop, subagents)."""
+    across every model call the agent makes (main agent, tool loop, subagents).
+    Decider (tool-selection) calls are skipped so speed/model stats describe the
+    main model only."""
 
     def __init__(self) -> None:
         self._starts: dict[str, float] = {}
+        self._skipped: set[str] = set()
         self.prompt_tokens = 0
         self.completion_tokens = 0
         self.llm_seconds = 0.0
         self.calls = 0
         self.model: str | None = None
 
-    async def on_chat_model_start(self, serialized, messages, *, run_id, **kwargs) -> None:
+    async def on_chat_model_start(self, serialized, messages, *, run_id, metadata=None, **kwargs) -> None:
+        if (metadata or {}).get("lc_source") == "tool_selection":
+            self._skipped.add(str(run_id))
+            return
         self._starts[str(run_id)] = time.monotonic()
 
     async def on_llm_start(self, serialized, prompts, *, run_id, **kwargs) -> None:
         self._starts[str(run_id)] = time.monotonic()
 
     async def on_llm_end(self, response, *, run_id, **kwargs) -> None:
+        if str(run_id) in self._skipped:
+            self._skipped.discard(str(run_id))
+            return
         start = self._starts.pop(str(run_id), None)
         if start is not None:
             self.llm_seconds += time.monotonic() - start

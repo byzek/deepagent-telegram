@@ -12,13 +12,14 @@ from dataclasses import dataclass
 import httpx
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, StoreBackend
-from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware import LLMToolSelectorMiddleware, TodoListMiddleware
 from langchain_openai import ChatOpenAI
 
 from app.backend_sandbox import SandboxBackend
 from app.config import settings
 from app.prompt import system_prompt
 from app.tools import (
+    build_image_tools,
     build_memory_tools,
     build_schedule_tools,
     build_search_tools,
@@ -26,6 +27,14 @@ from app.tools import (
 )
 
 log = logging.getLogger(__name__)
+
+# Never filtered by the decider: the deepagents harness (files, shell, planning,
+# subagents) and the recall tools the system prompt tells the agent to use
+# before acting. Everything else — including tools added later — is selectable.
+ALWAYS_AVAILABLE_TOOLS = [
+    "write_todos", "ls", "read_file", "write_file", "edit_file", "delete",
+    "glob", "grep", "execute", "task", "search_memory", "search_skills",
+]
 
 
 @dataclass
@@ -67,6 +76,46 @@ def _build_model() -> ChatOpenAI:
     )
 
 
+class _ToolSelector(LLMToolSelectorMiddleware):
+    """Fails open: if the decider errors or picks nonexistent tools, the main
+    model runs with every tool. Main-model errors still propagate untouched."""
+
+    async def awrap_model_call(self, request, handler):
+        called = False
+
+        async def tracked(req):
+            nonlocal called
+            called = True
+            return await handler(req)
+
+        try:
+            return await super().awrap_model_call(request, tracked)
+        except Exception as exc:  # noqa: BLE001 - a bad decision must never cost a reply
+            if called:
+                raise
+            log.warning("tool selection failed, using all tools: %s", exc)
+            return await handler(request)
+
+
+def _build_tool_selector() -> _ToolSelector | None:
+    if not settings.llm_decider_model:
+        return None
+    decider = ChatOpenAI(
+        model=settings.llm_decider_model,
+        base_url=settings.llm_decider_base_url,
+        api_key=settings.llm_decider_api_key,
+        temperature=0,
+        max_tokens=256,
+        max_retries=0,
+        timeout=settings.llm_decider_timeout,
+    )
+    return _ToolSelector(
+        model=decider,
+        always_include=ALWAYS_AVAILABLE_TOOLS,
+        on_parsing_failure="all",
+    )
+
+
 def _build_backend() -> CompositeBackend:
     """Default backend is the sandbox: the file tools AND the built-in `execute`
     tool share the isolated container's real `/workspace` (one filesystem, no
@@ -99,21 +148,28 @@ def build_agent(checkpointer, store, pool):
         *build_memory_tools(),
         *build_skill_tools(),
         *build_schedule_tools(pool),
+        *build_image_tools(),
     ]
+
+    middleware = [TodoListMiddleware()]
+    selector = _build_tool_selector()
+    if selector is not None:
+        middleware.append(selector)
 
     agent = create_deep_agent(
         model=model,
         tools=tools,
         system_prompt=system_prompt(settings.agent_name),
         backend=_build_backend(),
-        middleware=[TodoListMiddleware()],
+        middleware=middleware,
         context_schema=Context,
         checkpointer=checkpointer,
         store=store,
     )
     log.info(
-        "Deep Agent built: model=%s tools=%s",
+        "Deep Agent built: model=%s decider=%s tools=%s",
         settings.llm_model,
+        settings.llm_decider_model or None,
         [getattr(t, "name", str(t)) for t in tools],
     )
     return agent

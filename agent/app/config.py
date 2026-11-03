@@ -51,6 +51,23 @@ class Settings:
     llm_stream_idle_timeout: float = float(os.environ.get("LLM_STREAM_IDLE_TIMEOUT", "300"))
     llm_hard_timeout: float = float(os.environ.get("LLM_HARD_TIMEOUT", "3600"))
 
+    # --- Decider (small model that picks tools before each main-model call) --
+    # Empty = disabled: the main model sees every tool. Endpoint/key default to
+    # the main LLM's.
+    llm_decider_model: str = os.environ.get("LLM_DECIDER_MODEL", "")
+    llm_decider_base_url: str = (
+        os.environ.get("LLM_DECIDER_BASE_URL")
+        or os.environ.get("LLM_BASE_URL", "http://host.docker.internal:8080/v1")
+    )
+    llm_decider_api_key: str = (
+        os.environ.get("LLM_DECIDER_API_KEY")
+        or os.environ.get("LLM_API_KEY", "")
+        or "not-needed"
+    )
+    # Total seconds per decision. Keep it short: on timeout the turn just
+    # proceeds with every tool.
+    llm_decider_timeout: float = float(os.environ.get("LLM_DECIDER_TIMEOUT", "30"))
+
     # --- Embeddings (for semantic memory) ------------------------------------
     # Default to the same private endpoint as the chat model.
     embeddings_base_url: str = (
@@ -97,6 +114,12 @@ class Settings:
     # Optional: raises GitHub API rate limits (60->5000/hr) when installing
     # skills from repos. Not required for public repos at low volume.
     github_token: str = os.environ.get("GITHUB_TOKEN", "")
+
+    # --- Image generation (Cloudflare Workers AI) ----------------------------
+    # Both set => the `generate_image` tool is enabled. Free tier: 10k
+    # neurons/day, resetting 00:00 UTC.
+    cloudflare_account_id: str = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
+    cloudflare_api_token: str = os.environ.get("CLOUDFLARE_API_TOKEN", "")
 
     # --- Sandbox -------------------------------------------------------------
     sandbox_url: str = os.environ.get("SANDBOX_URL", "http://sandbox:8000").rstrip("/")
