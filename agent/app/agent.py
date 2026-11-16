@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import httpx
 from deepagents import create_deep_agent
+from deepagents import MemoryMiddleware
 from deepagents.backends import CompositeBackend, StoreBackend
 from langchain.agents.middleware import LLMToolSelectorMiddleware, TodoListMiddleware
 from langchain_openai import ChatOpenAI
@@ -35,6 +36,9 @@ ALWAYS_AVAILABLE_TOOLS = [
     "write_todos", "ls", "read_file", "write_file", "edit_file", "delete",
     "glob", "grep", "execute", "task", "search_memory", "search_skills",
 ]
+
+# Injected into the system prompt every turn (per-user, via the /memories/ route).
+MEMORY_SOURCES = ["/memories/instructions.md"]
 
 
 @dataclass
@@ -116,6 +120,19 @@ def _build_tool_selector() -> _ToolSelector | None:
     )
 
 
+class _Memory(MemoryMiddleware):
+    """Reloads every turn. Upstream loads once per thread and checkpoints it,
+    but our threads live until /reset, so edits would never reach the prompt."""
+
+    async def abefore_agent(self, state, runtime, config):
+        state = {k: v for k, v in state.items() if k != "memory_contents"}
+        return await super().abefore_agent(state, runtime, config)
+
+
+def _build_memory(backend) -> _Memory:
+    return _Memory(backend=backend, sources=MEMORY_SOURCES)
+
+
 def _build_backend() -> CompositeBackend:
     """Default backend is the sandbox: the file tools AND the built-in `execute`
     tool share the isolated container's real `/workspace` (one filesystem, no
@@ -151,7 +168,8 @@ def build_agent(checkpointer, store, pool):
         *build_image_tools(),
     ]
 
-    middleware = [TodoListMiddleware()]
+    backend = _build_backend()
+    middleware = [TodoListMiddleware(), _build_memory(backend)]
     selector = _build_tool_selector()
     if selector is not None:
         middleware.append(selector)
@@ -160,7 +178,7 @@ def build_agent(checkpointer, store, pool):
         model=model,
         tools=tools,
         system_prompt=system_prompt(settings.agent_name),
-        backend=_build_backend(),
+        backend=backend,
         middleware=middleware,
         context_schema=Context,
         checkpointer=checkpointer,
