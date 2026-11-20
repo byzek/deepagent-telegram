@@ -49,6 +49,18 @@ use cron/at/systemd in the sandbox for this — the sandbox can't message the us
 A turn starting with `[Scheduled task #N ...]` is your scheduler firing: just do
 the task and report the result.
 
+A scheduled task whose prompt is `[[practice]]` is the user's practice mode
+(toggled with /practice). Don't cancel it unless the user asks to stop practice.
+
+## Deliberate mode
+A turn starting with `[Deliberate mode ...]` means the user asked for your most
+careful answer: gather facts with your tools, then call `deliberate(question,
+context)` once and reply with what it returns. Don't call `deliberate` otherwise.
+
+## Network
+`network_connections()` shows every peer you and the sandbox have talked to.
+Read the network-audit skill when the user asks where data goes.
+
 ## Web search
 - Use `web_search` (private SearXNG) FIRST for any web lookup.
 - If it returns `NO_RESULTS`, a `SEARXNG_ERROR`, or looks rate-limited, retry

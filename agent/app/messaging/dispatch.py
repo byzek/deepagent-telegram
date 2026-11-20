@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from app import threads
 from app.agent import Context
 from app.config import settings
+from app.deliberate import split_trigger, wrap_turn
 from app.metrics import TurnMetrics, write_turn
 from app.tools.image import outbox
 
@@ -56,12 +57,16 @@ def chunk(text: str, size: int) -> list[str]:
 
 
 async def handle_turn(
-    ctx, platform: str, raw_user_id, chat_id, text: str, images=()
+    ctx, platform: str, raw_user_id, chat_id, text: str, images=(), thread: str | None = None
 ) -> Reply:
     """Run one user message (optionally with JPEG images) through the agent and
-    return the reply."""
+    return the reply. `thread` overrides the chat's conversation thread (used by
+    background runs like practice so they don't clutter the user's chat)."""
     user_id = f"{platform}:{raw_user_id}"
-    tid = await threads.thread_id(ctx.pool, platform, chat_id)
+    tid = thread or await threads.thread_id(ctx.pool, platform, chat_id)
+    triggered, question = split_trigger(text)
+    if triggered and question:
+        text = wrap_turn(question)
 
     metrics = TurnMetrics()
     config = {

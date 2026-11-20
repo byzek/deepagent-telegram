@@ -12,6 +12,7 @@ from app.catalog import catalog_sampler
 from app.core import build_app_context, seed_user_ids
 from app.skills_install import _default_run_cmd
 from app.metrics import network_sampler
+from app.netconns import connection_sampler
 from app.scheduler import scheduler_loop
 
 
@@ -36,13 +37,19 @@ async def amain() -> None:
         )
     )
 
+    run_cmd = lambda c: _default_run_cmd(c, settings.sandbox_url, settings.sandbox_token)  # noqa: E731
+    conns = asyncio.create_task(
+        connection_sampler(
+            ctx.pool, run_cmd, settings.net_sample_interval, settings.net_metrics_retention_hours
+        )
+    )
     cataloger = asyncio.create_task(
         catalog_sampler(
             ctx.pool,
             ctx.store,
             seed_user_ids(),
             ctx.agent.baked_tools,
-            lambda c: _default_run_cmd(c, settings.sandbox_url, settings.sandbox_token),
+            run_cmd,
             settings.catalog_interval,
         )
     )
@@ -79,6 +86,7 @@ async def amain() -> None:
 
     sampler.cancel()
     cataloger.cancel()
+    conns.cancel()
     sched.cancel()
     for module, handle in started:
         await module.stop(handle)

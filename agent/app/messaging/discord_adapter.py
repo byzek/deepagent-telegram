@@ -12,7 +12,7 @@ import logging
 
 import discord
 
-from app import threads
+from app import practice, threads
 from app.config import settings
 from app.messaging.dispatch import chunk, handle_turn
 
@@ -61,12 +61,20 @@ class _Client(discord.Client):
             await message.channel.send(
                 "I search the web, run code in a sandbox, and remember things "
                 "across conversations. In servers, @mention me. Commands: "
-                "!reset (fresh conversation), !whoami."
+                "!reset (fresh conversation), !whoami, "
+                "!practice on|off|now|status (nightly skill drills). Start a "
+                "message with \"deliberate\" for a best-of-N answer."
             )
             return
         if content == "!reset":
             await threads.reset(self.ctx.pool, PLATFORM, message.channel.id)
             await message.channel.send("Fresh conversation started.")
+            return
+        if content == "!practice" or content.startswith("!practice "):
+            await message.channel.send(await practice.command(
+                self.ctx.pool, PLATFORM, str(uid), str(message.channel.id),
+                content[len("!practice"):],
+            ))
             return
         if not content:
             return

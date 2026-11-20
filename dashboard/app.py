@@ -12,7 +12,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -188,6 +188,24 @@ async def stats():
     )
 
 
+@app.get("/api/connections")
+async def connections(hours: int = Query(24, ge=1, le=24 * 30)):
+    try:
+        rows = await _rows(
+            "SELECT source, proto, direction, ip, port, name, kind, first_seen, last_seen,"
+            " samples, peak, open_now, (last_seen > now() - interval '30 seconds') AS active"
+            " FROM net_conn WHERE last_seen > now() - make_interval(hours => %s)"
+            " ORDER BY samples DESC LIMIT 1000",
+            (hours,),
+        )
+    except Exception:  # table not created yet (agent hasn't booted)
+        rows = []
+    for r in rows:
+        r["first_seen"] = r["first_seen"].isoformat()
+        r["last_seen"] = r["last_seen"].isoformat()
+    return JSONResponse({"hours": hours, "connections": rows})
+
+
 @app.get("/api/catalog")
 async def catalog():
     try:
@@ -272,6 +290,23 @@ _HTML = """<!doctype html>
       <span><span class="sw" style="background:#58a6ff"></span>rx (down)</span>
       <span><span class="sw" style="background:#3fb950"></span>tx (up)</span>
     </div>
+  </div>
+
+  <div class="panel full">
+    <h2>Connections (agent + sandbox)</h2>
+    <div class="lg" id="connctl">
+      window: <a href="#" data-h="1">1h</a> <a href="#" data-h="24">24h</a> <a href="#" data-h="72">72h</a>
+      · show: <a href="#" data-k="all">all</a> <a href="#" data-k="external">external</a> <a href="#" data-k="internal">internal</a> <a href="#" data-k="host">host</a>
+      · <span id="connsum"></span>
+    </div>
+    <svg id="conngraph" viewBox="0 0 900 200" style="height:auto"></svg>
+    <div class="lg">
+      <span><span class="sw" style="background:#58a6ff"></span>internal</span>
+      <span><span class="sw" style="background:#d29922"></span>host (LLM)</span>
+      <span><span class="sw" style="background:#f85149"></span>external</span>
+      <span>line width = samples seen · bright = open now · hover a node to isolate it</span>
+    </div>
+    <table id="conntable" style="margin-top:10px"></table>
   </div>
 
   <div class="panel"><h2>Per user</h2><table id="per_user"></table></div>
@@ -398,6 +433,62 @@ async function refreshCatalog(){
 }
 refresh(); setInterval(refresh, 3000);
 refreshCatalog(); setInterval(refreshCatalog, 15000);
+
+const KC={internal:'#58a6ff',host:'#d29922',external:'#f85149'};
+let connH=24, connK='all';
+function ago(t){const s=(Date.now()-new Date(t))/1000;return s<60?Math.round(s)+'s':s<3600?Math.round(s/60)+'m':Math.round(s/3600)+'h';}
+function connGraph(groups){
+  const svg=document.getElementById('conngraph');
+  const srcs=[...new Set(groups.flatMap(g=>g.edges.map(e=>e.source)))].sort();
+  const rowH=22, H=Math.max(srcs.length,groups.length)*rowH+20, W=900, xl=150, xr=560;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.style.height=H+'px';
+  const ys=i=>10+rowH/2+i*rowH*Math.max(1,groups.length/Math.max(1,srcs.length));
+  const yd=i=>10+rowH/2+i*rowH;
+  const maxS=Math.max(1,...groups.flatMap(g=>g.edges.map(e=>e.samples)));
+  let s='';
+  groups.forEach((g,i)=>g.edges.forEach(e=>{
+    const y1=ys(srcs.indexOf(e.source)), y2=yd(i), w=1+4*Math.log1p(e.samples)/Math.log1p(maxS);
+    s+=`<path class="ce" data-a="${esc(e.source)}" data-b="${i}" d="M${xl} ${y1} C${(xl+xr)/2} ${y1},${(xl+xr)/2} ${y2},${xr} ${y2}" fill="none" stroke="${KC[g.kind]}" stroke-width="${w.toFixed(1)}" stroke-opacity="${e.open?0.95:0.3}"><title>${esc(e.source)} ${e.dir} ${esc(g.label)} :${e.ports.join(',')} · ${e.samples} samples</title></path>`;
+  }));
+  srcs.forEach((n,i)=>{s+=`<g class="cn" data-a="${esc(n)}"><rect x="20" y="${ys(i)-9}" width="${xl-20}" height="18" rx="4" fill="#21262d" stroke="#30363d"/><text x="${xl-8}" y="${ys(i)+4}" fill="#e6edf3" font-size="12" text-anchor="end">${esc(n)}</text></g>`;});
+  groups.forEach((g,i)=>{s+=`<g class="cn" data-b="${i}"><circle cx="${xr+8}" cy="${yd(i)}" r="5" fill="${KC[g.kind]}" ${g.active?'':'fill-opacity="0.35"'}/><text x="${xr+20}" y="${yd(i)+4}" fill="#e6edf3" font-size="12">${esc(g.label)} <tspan fill="#8b949e">:${g.ports.slice(0,6).join(',')}${g.ports.length>6?'…':''}</tspan></text></g>`;});
+  svg.innerHTML=s;
+  svg.querySelectorAll('.cn').forEach(n=>{
+    n.onmouseenter=()=>svg.querySelectorAll('.ce').forEach(e=>{
+      const hit=(n.dataset.a&&e.dataset.a===n.dataset.a)||(n.dataset.b&&e.dataset.b===n.dataset.b);
+      e.style.opacity=hit?1:0.05;});
+    n.onmouseleave=()=>svg.querySelectorAll('.ce').forEach(e=>e.style.opacity='');
+  });
+}
+async function refreshConns(){
+  try{
+    const d=await (await fetch('/api/connections?hours='+connH)).json();
+    const rows=d.connections.filter(r=>connK==='all'||r.kind===connK);
+    const by={};
+    for(const r of rows){
+      const label=r.name||r.ip, k=label+'|'+r.kind;
+      const g=by[k]??={label,kind:r.kind,ports:new Set(),samples:0,active:false,edges:{}};
+      g.ports.add(r.port); g.samples+=+r.samples; g.active||=r.active&&r.open_now>0;
+      const e=g.edges[r.source+r.direction]??={source:r.source,dir:r.direction,ports:new Set(),samples:0,open:0};
+      e.ports.add(r.port); e.samples+=+r.samples; e.open+=r.active?r.open_now:0;
+    }
+    const groups=Object.values(by).sort((a,b)=>b.samples-a.samples).slice(0,40).map(g=>({...g,
+      ports:[...g.ports].sort((a,b)=>a-b),edges:Object.values(g.edges).map(e=>({...e,ports:[...e.ports].sort((a,b)=>a-b)}))}));
+    connGraph(groups);
+    const ext=new Set(d.connections.filter(r=>r.kind==='external').map(r=>r.name||r.ip)).size;
+    document.getElementById('connsum').textContent=`${Object.keys(by).length} peers · ${ext} external · last ${connH}h`;
+    table(document.getElementById('conntable'),rows.slice(0,100),[
+      {h:'peer',k:'__p',f:v=>v},{h:'port',k:'port',f:v=>v},{h:'src',k:'source',f:esc},{h:'dir',k:'direction',f:v=>v},
+      {h:'proto',k:'proto',f:v=>v},{h:'samples',k:'samples',f:fmtInt},{h:'peak',k:'peak',f:fmtInt},
+      {h:'open',k:'__o',f:v=>v},{h:'first',k:'first_seen',f:ago},{h:'last',k:'last_seen',f:ago}]);
+    document.querySelectorAll('#conntable tr').forEach((tr,i)=>{if(!i)return;const r=rows[i-1];
+      tr.cells[0].innerHTML=`<span class="sw" style="background:${KC[r.kind]}"></span>${esc(r.name||r.ip)}${r.name?` <span class="mut">${esc(r.ip)}</span>`:''}`;
+      tr.cells[7].textContent=r.active?r.open_now:'–';});
+  }catch(e){console.error(e);}
+}
+document.getElementById('connctl').onclick=e=>{const a=e.target.closest('a');if(!a)return;e.preventDefault();
+  if(a.dataset.h)connH=+a.dataset.h; if(a.dataset.k)connK=a.dataset.k; refreshConns();};
+refreshConns(); setInterval(refreshConns, 5000);
 </script>
 </body></html>
 """

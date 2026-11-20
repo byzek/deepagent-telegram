@@ -137,14 +137,21 @@ async def _fire(ctx, senders: dict, job: tuple) -> None:
     if send is None or int(user_id) not in settings.allowed_user_ids(platform):
         log.warning("dropping scheduled job #%s: platform/user no longer enabled", job_id)
         return
-    kind = f"recurring every {every} min" if every else "one-time"
-    text = (
-        f"[Scheduled task #{job_id}, {kind}. This was triggered automatically by "
-        f"your scheduler, not typed by the user. Carry it out now; your reply is "
-        f"sent to the user.]\n{prompt}"
-    )
+    from app import practice
+
+    thread = None
+    if prompt == practice.SENTINEL:
+        text = practice.practice_turn()
+        thread = f"practice:{platform}:{user_id}:{job_id}:{datetime.now(timezone.utc):%Y%m%dT%H%M}"
+    else:
+        kind = f"recurring every {every} min" if every else "one-time"
+        text = (
+            f"[Scheduled task #{job_id}, {kind}. This was triggered automatically by "
+            f"your scheduler, not typed by the user. Carry it out now; your reply is "
+            f"sent to the user.]\n{prompt}"
+        )
     try:
-        reply = await handle_turn(ctx, platform, user_id, chat_id, text)
+        reply = await handle_turn(ctx, platform, user_id, chat_id, text, thread=thread)
     except Exception as exc:  # noqa: BLE001
         log.exception("scheduled job #%s failed", job_id)
         reply = Reply(f"Scheduled task #{job_id} failed: {exc}")

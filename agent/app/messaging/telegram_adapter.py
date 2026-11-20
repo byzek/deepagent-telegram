@@ -19,7 +19,7 @@ from telegram.ext import (
     filters,
 )
 
-from app import threads
+from app import practice, threads
 from app.config import settings
 from app.messaging.dispatch import chunk, handle_turn
 
@@ -64,6 +64,9 @@ async def _help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "across conversations (with semantic recall).\n\n"
         "/reset — fresh conversation (keeps long-term memory)\n"
         "/whoami — your Telegram user id\n"
+        "/deliberate <question> — best-of-N answer for hard questions "
+        "(or start any message with the word \"deliberate\")\n"
+        "/practice on|off|now|status — nightly skill drills\n"
         "/help — this message"
     )
 
@@ -80,6 +83,16 @@ async def _reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     await threads.reset(_ctx(context).pool, PLATFORM, update.effective_chat.id)
     await update.message.reply_text("Fresh conversation started.")
+
+
+async def _practice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    msg = await practice.command(
+        _ctx(context).pool, PLATFORM, str(update.effective_user.id),
+        str(update.effective_chat.id), " ".join(context.args or []),
+    )
+    await update.message.reply_text(msg)
 
 
 async def _send(target, text: str, *, parse_mode=None) -> None:
@@ -186,6 +199,13 @@ async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _run_turn(update, context, text)
 
 
+async def _on_deliberate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Commands skip _on_message; pass the full "/deliberate ..." text through.
+    if not _authorized(update):
+        return
+    await _run_turn(update, context, (update.message.text or "").strip())
+
+
 async def _on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _authorized(update):
         log.info("Ignoring Telegram photo from %s", update.effective_user)
@@ -216,6 +236,8 @@ def _build(ctx) -> Application:
     app.add_handler(CommandHandler("help", _help))
     app.add_handler(CommandHandler("whoami", _whoami))
     app.add_handler(CommandHandler("reset", _reset))
+    app.add_handler(CommandHandler("practice", _practice))
+    app.add_handler(CommandHandler("deliberate", _on_deliberate))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _on_message))
     app.add_handler(MessageHandler(filters.PHOTO, _on_photo))
     return app

@@ -20,8 +20,10 @@ from app.backend_sandbox import SandboxBackend
 from app.config import settings
 from app.prompt import system_prompt
 from app.tools import (
+    build_deliberate_tools,
     build_image_tools,
     build_memory_tools,
+    build_network_tools,
     build_schedule_tools,
     build_search_tools,
     build_skill_tools,
@@ -35,6 +37,7 @@ log = logging.getLogger(__name__)
 ALWAYS_AVAILABLE_TOOLS = [
     "write_todos", "ls", "read_file", "write_file", "edit_file", "delete",
     "glob", "grep", "execute", "task", "search_memory", "search_skills",
+    "deliberate",
 ]
 
 # Injected into the system prompt every turn (per-user, via the /memories/ route).
@@ -171,6 +174,8 @@ def build_tools(pool) -> list:
         *build_skill_tools(),
         *build_schedule_tools(pool),
         *build_image_tools(),
+        *build_network_tools(pool),
+        *build_deliberate_tools(),
     ]
 
 

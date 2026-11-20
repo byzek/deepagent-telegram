@@ -131,6 +131,14 @@ class Settings:
     catalog_interval: float = float(os.environ.get("CATALOG_INTERVAL", "60"))
     net_metrics_retention_hours: int = int(os.environ.get("NET_METRICS_RETENTION_HOURS", "72"))
 
+    # --- Deliberate mode (best-of-N) ------------------------------------------
+    deliberate_n: int = int(os.environ.get("DELIBERATE_N", "5"))
+    deliberate_temperature: float = float(os.environ.get("DELIBERATE_TEMPERATURE", "0.9"))
+
+    # --- Practice (nightly skill drills) -----------------------------------------
+    practice_every_minutes: int = int(os.environ.get("PRACTICE_EVERY_MINUTES", "1440"))
+    practice_at: str = os.environ.get("PRACTICE_AT", "03:00")
+
     # --- Scheduler -----------------------------------------------------------
     # IANA zone used for naive times the agent schedules ("08:00") and for
     # stepping recurring jobs in wall-clock time.

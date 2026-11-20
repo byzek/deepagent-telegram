@@ -191,6 +191,17 @@ Send the bot normal messages. Built-in commands:
 - `/whoami` — shows your Telegram id and whether you're authorized
 - `/reset` — start a fresh conversation (clears short-term context; your
   long-term memory and skills are kept)
+- `deliberate <question>` (or `/deliberate`, Discord `!deliberate`): best-of-N
+  answer. The agent gathers facts with its tools, then generates `DELIBERATE_N`
+  (default 5) independent answers in parallel at `DELIBERATE_TEMPERATURE` and a
+  judge call picks the best. Costs about N+1 generations, which is free on your
+  own GPU.
+- `/practice on|off|now|status` (Discord `!practice ...`): practice mode. When
+  on, the agent runs daily at `PRACTICE_AT` (every `PRACTICE_EVERY_MINUTES`). It
+  picks its least-recently practiced skill, invents a realistic task, does it in
+  `/workspace/practice/`, fixes the skill if it was wrong or vague, logs to
+  `/workspace/practice/log.md`, and sends you a short report. Each run uses its
+  own thread, so your chat history stays clean.
 
 Make targets:
 
@@ -390,6 +401,27 @@ completion tokens across every model call in the turn (main agent, tool loop, an
 subagents), so the rate reflects generation speed, not wall-clock including tool
 time. Requires your endpoint to return `usage` (most OpenAI-compatible servers
 do); if it doesn't, token counts read as 0 but everything else still works.
+
+### Connections panel
+
+Every `NET_SAMPLE_INTERVAL` seconds the agent reads the kernel socket tables
+(`/proc/net/tcp*`, `/proc/net/udp*`) of its own container and of the sandbox
+(via the exec API, with no Docker socket and no extra privileges). As in
+ntopng's service map, raw connections are folded into services (source,
+direction, peer, port), and each is upserted with first/last seen, samples,
+peak concurrency and open-now count. Storage grows with distinct peers, not with
+traffic. Peers are named from compose service names, then reverse DNS.
+
+The panel draws a Hubble-style graph: sources on the left, peers on the right,
+line width = how often it was seen, bright = open now, colored internal / host
+(LLM) / external. Hover a node to isolate its edges. Below the graph is an
+ntopng-style table. Switch between 1h/24h/72h and filter by kind.
+The agent can query the same data with its `network_connections` tool (see the
+`network-audit` skill).
+
+Limits: very short-lived connections can be missed between samples, though
+closed TCP sockets linger in TIME_WAIT for ~60s, so most are caught. SearXNG's
+upstream engine traffic happens in its own container and isn't tracked.
 
 ### Tools & skills panels
 
