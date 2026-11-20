@@ -188,6 +188,17 @@ async def stats():
     )
 
 
+@app.get("/api/catalog")
+async def catalog():
+    try:
+        rows = await _rows("SELECT ts, data FROM agent_catalog WHERE id = 1")
+    except Exception:  # table not created yet (agent hasn't booted)
+        rows = []
+    if not rows:
+        return JSONResponse({"ts": None, "tools": {"baked": [], "developed": []}, "skills": {}})
+    return JSONResponse({"ts": rows[0]["ts"].isoformat(), **rows[0]["data"]})
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return HTMLResponse(_HTML)
@@ -266,6 +277,12 @@ _HTML = """<!doctype html>
   <div class="panel"><h2>Per user</h2><table id="per_user"></table></div>
   <div class="panel"><h2>Per memory backend</h2><table id="per_backend"></table></div>
   <div class="panel"><h2>Per model</h2><table id="per_model"></table></div>
+
+  <div class="panel"><h2>Baked-in tools</h2><table id="tools_baked"></table></div>
+  <div class="panel"><h2>Developed tools (sandbox code)</h2><table id="tools_dev"></table></div>
+  <div class="panel full"><h2>Skills <span class="mut" id="cat_ts"></span></h2>
+    <div class="lg">baked = shipped seed, unchanged · modified = seed the agent edited · learned = acquired since start · deleted = seed removed</div>
+    <div id="skills"></div></div>
 </main>
 
 <script>
@@ -361,7 +378,26 @@ async function refresh(){
     table(document.getElementById('per_model'), withKey(s.per_model,'model'), cols);
   }catch(e){console.error(e);}
 }
+const esc=v=>String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function refreshCatalog(){
+  try{
+    const c=await (await fetch('/api/catalog')).json();
+    document.getElementById('cat_ts').textContent=c.ts?'snapshot '+new Date(c.ts).toLocaleTimeString():'(no snapshot yet)';
+    table(document.getElementById('tools_baked'),c.tools.baked,[{h:'tool',k:'name',f:esc},{h:'description',k:'description',f:esc}]);
+    const dev=c.tools.developed;
+    document.getElementById('tools_dev').innerHTML=dev.length?'':'<tr><td>none yet</td></tr>';
+    if(dev.length)table(document.getElementById('tools_dev'),dev,[{h:'group',k:'name',f:esc},{h:'files',k:'files',f:f=>esc(f.join(', '))}]);
+    const order={learned:0,modified:1,baked:2,deleted:3};
+    document.getElementById('skills').innerHTML=Object.entries(c.skills).map(([u,sk])=>{
+      sk=[...sk].sort((a,b)=>order[a.origin]-order[b.origin]||a.name.localeCompare(b.name));
+      const n=o=>sk.filter(s=>s.origin===o).length;
+      return `<h3 style="font-size:13px;margin:12px 0 4px"><code>${esc(u)}</code> <span class="mut">${n('learned')} learned · ${n('modified')} modified · ${n('baked')} baked</span></h3>`
+        +'<table>'+sk.map(s=>`<tr><td>${esc(s.name)}</td><td>${s.origin}</td></tr>`).join('')+'</table>';
+    }).join('')||'<span class="mut">no users</span>';
+  }catch(e){console.error(e);}
+}
 refresh(); setInterval(refresh, 3000);
+refreshCatalog(); setInterval(refreshCatalog, 15000);
 </script>
 </body></html>
 """

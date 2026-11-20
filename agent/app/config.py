@@ -128,6 +128,7 @@ class Settings:
 
     # --- Metrics -------------------------------------------------------------
     net_sample_interval: float = float(os.environ.get("NET_SAMPLE_INTERVAL", "5"))
+    catalog_interval: float = float(os.environ.get("CATALOG_INTERVAL", "60"))
     net_metrics_retention_hours: int = int(os.environ.get("NET_METRICS_RETENTION_HOURS", "72"))
 
     # --- Scheduler -----------------------------------------------------------

@@ -17,7 +17,7 @@ endif
 
 .PHONY: help up down build rebuild logs logs-agent ps restart pull \
         config secrets nuke sh-agent sh-sandbox psql search-test \
-        dashboard up-qdrant stats smoke preflight
+        dashboard up-qdrant stats smoke preflight export-skills
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -101,6 +101,12 @@ ifeq ($(MEMORY_BACKEND),qdrant)
 endif
 	$(COMPOSE) build agent sandbox
 	$(COMPOSE) run --rm agent python -m app.smoke
+
+export-skills: ## Copy USER_ID's skills (+ sandbox code) into DEST/agent/seed for a fresh instance
+	@test -n "$(USER_ID)" -a -n "$(DEST)" || { echo "usage: make export-skills USER_ID=telegram:123 DEST=../other-checkout"; exit 1; }
+	@test -d "$(DEST)/agent/seed" || { echo "ERROR: $(DEST)/agent/seed not found (clone the repo there first)"; exit 1; }
+	$(COMPOSE) run --rm -T agent python -m app.skills_bundle $(USER_ID) | tar -x -C "$(DEST)/agent/seed"
+	@echo "→ exported skills to $(DEST)/agent/seed (memories NOT included)"
 
 nuke: ## DESTRUCTIVE: stop and delete containers AND all volumes/data
 	$(COMPOSE) --profile qdrant down -v

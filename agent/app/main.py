@@ -8,7 +8,9 @@ import logging
 import signal
 
 from app.config import settings
-from app.core import build_app_context
+from app.catalog import catalog_sampler
+from app.core import build_app_context, seed_user_ids
+from app.skills_install import _default_run_cmd
 from app.metrics import network_sampler
 from app.scheduler import scheduler_loop
 
@@ -31,6 +33,17 @@ async def amain() -> None:
             ctx.pool,
             settings.net_sample_interval,
             settings.net_metrics_retention_hours,
+        )
+    )
+
+    cataloger = asyncio.create_task(
+        catalog_sampler(
+            ctx.pool,
+            ctx.store,
+            seed_user_ids(),
+            ctx.agent.baked_tools,
+            lambda c: _default_run_cmd(c, settings.sandbox_url, settings.sandbox_token),
+            settings.catalog_interval,
         )
     )
 
@@ -65,6 +78,7 @@ async def amain() -> None:
     log.info("Shutting down…")
 
     sampler.cancel()
+    cataloger.cancel()
     sched.cancel()
     for module, handle in started:
         await module.stop(handle)

@@ -154,19 +154,38 @@ def _build_backend() -> CompositeBackend:
     )
 
 
-def build_agent(checkpointer, store, pool):
-    """Return a compiled Deep Agent graph wired to durable persistence."""
-    model = _build_model()
+# Tools the deepagents harness provides itself (not in our `tools` list).
+HARNESS_TOOLS = [
+    "write_todos", "ls", "read_file", "write_file", "edit_file", "delete",
+    "glob", "grep", "execute", "task",
+]
+
+
+def build_tools(pool) -> list:
     # NOTE: no custom `execute` tool here — deepagents provides a built-in
     # `execute` that now works because our default backend is sandbox-capable.
     # A second tool named `execute` would collide with it.
-    tools = [
+    return [
         *build_search_tools(),
         *build_memory_tools(),
         *build_skill_tools(),
         *build_schedule_tools(pool),
         *build_image_tools(),
     ]
+
+
+def baked_tool_catalog(tools) -> list[dict]:
+    """Every tool shipped in the image: harness built-ins + our Python tools."""
+    return [{"name": n, "description": "deepagents harness built-in"} for n in HARNESS_TOOLS] + [
+        {"name": t.name, "description": (t.description or "").strip().split("\n")[0]}
+        for t in tools
+    ]
+
+
+def build_agent(checkpointer, store, pool):
+    """Return a compiled Deep Agent graph wired to durable persistence."""
+    model = _build_model()
+    tools = build_tools(pool)
 
     backend = _build_backend()
     middleware = [TodoListMiddleware(), _build_memory(backend)]
@@ -184,6 +203,7 @@ def build_agent(checkpointer, store, pool):
         checkpointer=checkpointer,
         store=store,
     )
+    agent.baked_tools = baked_tool_catalog(tools)
     log.info(
         "Deep Agent built: model=%s decider=%s tools=%s",
         settings.llm_model,

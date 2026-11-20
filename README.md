@@ -391,6 +391,48 @@ subagents), so the rate reflects generation speed, not wall-clock including tool
 time. Requires your endpoint to return `usage` (most OpenAI-compatible servers
 do); if it doesn't, token counts read as 0 but everything else still works.
 
+### Tools & skills panels
+
+The dashboard also lists every tool and skill, split by where it came from:
+
+- **Baked-in tools**: the deepagents harness built-ins plus the Python tools in
+  `agent/app/tools/`.
+- **Developed tools**: runnable scripts the agent has installed or written in the
+  sandbox under `/workspace/skills/<name>/` and `/workspace/tools/`.
+- **Skills** (per user): `baked` (shipped in `agent/seed/skills/`, unchanged),
+  `modified` (seed the agent edited), `learned` (acquired since start),
+  `deleted` (seed the agent removed).
+
+The agent snapshots this into Postgres every `CATALOG_INTERVAL` seconds, so it
+works with every memory backend and the dashboard stays read-only.
+
+## New instance: keep skills, wipe memory
+
+Use this to deploy the agent for someone else. They get every skill (playbooks
+and sandbox code), but none of your memories, conversations, or metrics.
+
+1. Clone this repo into a new directory, e.g. `../deepagent-alice`.
+2. From **this** (running) instance, export a user's skills into it:
+   ```bash
+   make export-skills USER_ID=telegram:123456 DEST=../deepagent-alice
+   ```
+   This writes `skills/*.md` and `workspace/...` (sandbox code) into
+   `../deepagent-alice/agent/seed/`. `memories/instructions.md` stays the stock
+   one, so nothing personal is copied.
+3. In the new directory, `cp .env.example .env`, then set a **new bot token**
+   (a bot can only long-poll from one process), the new person's
+   `ALLOWED_*_USER_IDS`, and fresh secrets from `make secrets`. If it runs on the
+   same host as yours, also set `COMPOSE_PROJECT_NAME`, `DASHBOARD_PORT`, and
+   `SEARXNG_PORT` to new values so containers and volumes don't collide.
+4. `make up`. On first boot the exported skills are seeded for every allowed
+   user and the code is restored into the sandbox. Seeding never overwrites
+   existing files.
+
+Notes: skills you deleted from the original seed set are still present in the
+new checkout's seed directory, so delete them there if you don't want them.
+Memory is wiped because the new instance starts with new volumes. Don't copy
+`pgdata`.
+
 ## Swapping the messaging platform
 
 Everything except `agent/app/messaging/telegram_adapter.py` is

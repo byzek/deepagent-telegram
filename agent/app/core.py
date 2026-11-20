@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from app import scheduler, threads
+from app import catalog, scheduler, threads
 from app.agent import build_agent
 from app.config import settings
 from app.embeddings import build_embeddings
@@ -16,6 +16,8 @@ from app.memory import MemoryStore, build_memory_store
 from app.metrics import ensure_metrics_tables
 from app.persistence import Persistence, build_persistence
 from app.seed import seed_users
+from app.skills_bundle import SEED_WORKSPACE, seed_workspace
+from app.skills_install import _default_run_cmd
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +46,7 @@ class AppContext:
         await self.persistence.close()
 
 
-def _seed_user_ids() -> list[str]:
+def seed_user_ids() -> list[str]:
     """Platform-qualified user ids for every allowlisted user."""
     ids: list[str] = []
     for platform in settings.enabled_platforms():
@@ -58,11 +60,16 @@ async def build_app_context() -> AppContext:
     await ensure_metrics_tables(persistence.pool)
     await threads.ensure_table(persistence.pool)
     await scheduler.ensure_table(persistence.pool)
+    await catalog.ensure_table(persistence.pool)
 
     embeddings = build_embeddings()
     mem = await build_memory_store(persistence.pool, embeddings)
 
-    await seed_users(mem.store, _seed_user_ids())
+    await seed_users(mem.store, seed_user_ids())
+    await seed_workspace(
+        SEED_WORKSPACE,
+        lambda c: _default_run_cmd(c, settings.sandbox_url, settings.sandbox_token),
+    )
 
     agent = build_agent(persistence.checkpointer, mem.store, persistence.pool)
 

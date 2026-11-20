@@ -107,7 +107,7 @@ services:
     networks: [agentnet]
     ports:
       # Debug UI on the host, localhost-only. Comment out to fully seal it.
-      - "127.0.0.1:8888:8080"
+      - "127.0.0.1:${SEARXNG_PORT:-8888}:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
       interval: 10s
@@ -179,7 +179,7 @@ services:
       CLOUD_OUTPUT_PER_1M: ${CLOUD_OUTPUT_PER_1M:-10.00}
     networks: [agentnet]
     ports:
-      - "8899:8000"
+      - "${DASHBOARD_PORT:-8899}:8000"
     security_opt: ["no-new-privileges:true"]
 
   # ---------------------------------------------------------------------------
