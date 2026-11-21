@@ -25,9 +25,9 @@ RUN --mount=type=cache,target=/root/.cache/uv uv pip install -r /tmp/requirement
 ARG PIPER_VOICES="ru_RU-irina-medium en_US-amy-medium"
 RUN mkdir -p $PIPER_DIR && python -m piper.download_voices --download-dir $PIPER_DIR $PIPER_VOICES
 
-RUN useradd --create-home --uid 10003 voice && mkdir -p /models && chown voice:voice /models
+RUN useradd --create-home --uid 10003 speech && mkdir -p /models && chown speech:speech /models
 COPY voice_server.py /app/voice_server.py
 
-USER voice
+USER speech
 WORKDIR /app
 CMD ["python", "/app/voice_server.py"]
