@@ -1,0 +1,5 @@
+# Speech-to-text: CTranslate2 Whisper, CPU int8 by default.
+faster-whisper>=1.2.1,<2.0
+# Text-to-speech: Piper (ONNX, CPU), one voice per language.
+piper-tts>=1.8.0,<2.0
+numpy>=1.26

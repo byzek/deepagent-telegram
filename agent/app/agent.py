@@ -24,6 +24,7 @@ from app.tools import (
     build_image_tools,
     build_memory_tools,
     build_network_tools,
+    build_russian_tools,
     build_schedule_tools,
     build_search_tools,
     build_skill_tools,
@@ -175,6 +176,7 @@ def build_tools(pool) -> list:
         *build_schedule_tools(pool),
         *build_image_tools(),
         *build_network_tools(pool),
+        *build_russian_tools(pool),
         *build_deliberate_tools(),
     ]
 

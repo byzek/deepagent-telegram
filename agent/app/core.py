@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from app import catalog, netconns, scheduler, threads
+from app import catalog, netconns, russian, scheduler, threads
 from app.agent import build_agent
 from app.config import settings
 from app.embeddings import build_embeddings
@@ -60,6 +60,7 @@ async def build_app_context() -> AppContext:
     await ensure_metrics_tables(persistence.pool)
     await threads.ensure_table(persistence.pool)
     await scheduler.ensure_table(persistence.pool)
+    await russian.ensure_table(persistence.pool)
     await catalog.ensure_table(persistence.pool)
     await netconns.ensure_table(persistence.pool)
 

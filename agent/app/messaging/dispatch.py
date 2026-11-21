@@ -26,6 +26,9 @@ log = logging.getLogger(__name__)
 class Reply:
     text: str
     images: list[bytes] = field(default_factory=list)
+    # Speak the reply as a voice note where the platform supports it.
+    voice: bool = False
+    speed: float = 1.0
 
 
 def user_content(text: str, images) -> str | list[dict]:

@@ -139,6 +139,25 @@ class Settings:
     practice_every_minutes: int = int(os.environ.get("PRACTICE_EVERY_MINUTES", "1440"))
     practice_at: str = os.environ.get("PRACTICE_AT", "03:00")
 
+    # --- Voice (optional `voice` service: Whisper STT + Piper TTS) ------------
+    # Empty VOICE_URL = voice notes are politely declined and replies stay text.
+    voice_url: str = os.environ.get("VOICE_URL", "").rstrip("/")
+    voice_token: str = os.environ.get("VOICE_TOKEN", "")
+    voice_timeout: float = float(os.environ.get("VOICE_TIMEOUT", "180"))
+    # Also send the reply as text after the voice note (handy for reading along).
+    voice_transcripts: bool = os.environ.get("VOICE_TRANSCRIPTS", "true").lower() in ("1", "true", "yes")
+    # Telegram voice notes are capped here; longer replies go out as text only.
+    voice_max_chars: int = int(os.environ.get("VOICE_MAX_CHARS", "1200"))
+
+    # --- Russian conversation practice (/russian) --------------------------------
+    russian_at: str = os.environ.get("RUSSIAN_AT", "08:00")
+    russian_every_minutes: int = int(os.environ.get("RUSSIAN_EVERY_MINUTES", "1440"))
+    # A session with no messages for this long ends (and gets graded) on the next message.
+    russian_idle_minutes: int = int(os.environ.get("RUSSIAN_IDLE_MINUTES", "30"))
+    russian_review_cards: int = int(os.environ.get("RUSSIAN_REVIEW_CARDS", "8"))
+    # Speech speed for Russian sessions (1.0 = normal; 0.85 is easier to follow).
+    russian_speed: float = float(os.environ.get("RUSSIAN_SPEED", "0.9"))
+
     # --- Scheduler -----------------------------------------------------------
     # IANA zone used for naive times the agent schedules ("08:00") and for
     # stepping recurring jobs in wall-clock time.
@@ -190,6 +209,9 @@ class Settings:
                 missing.append("DISCORD_BOT_TOKEN")
             if not self.allowed_discord_user_ids:
                 missing.append("ALLOWED_DISCORD_USER_IDS")
+
+        if self.voice_url and not self.voice_token:
+            missing.append("VOICE_TOKEN (required when VOICE_URL is set)")
 
         if self.memory_backend not in {"pgvector", "qdrant", "inmemory"}:
             raise RuntimeError(

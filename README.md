@@ -108,6 +108,7 @@ deepagent-telegram/
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── app.py
+├── voice/                      # optional STT (faster-whisper) + TTS (Piper)
 ├── sandbox/                    # isolated code execution
 │   ├── Dockerfile
 │   └── exec_server.py          # tiny token-gated exec service (stdlib only)
@@ -202,6 +203,11 @@ Send the bot normal messages. Built-in commands:
   `/workspace/practice/`, fixes the skill if it was wrong or vague, logs to
   `/workspace/practice/log.md`, and sends you a short report. Each run uses its
   own thread, so your chat history stays clean.
+- **Voice notes** (needs the [voice service](#voice-notes--russian-practice)):
+  send a voice note and the bot transcribes it locally, answers, and replies
+  with a voice note (plus the text, unless `VOICE_TRANSCRIPTS=false`).
+- `/russian on|off|now|stop|status`: spoken Russian practice. See
+  [Voice notes & Russian practice](#voice-notes--russian-practice).
 
 Make targets:
 
@@ -224,6 +230,46 @@ Backend images are built with **[uv](https://docs.astral.sh/uv/)** (fast,
 reproducible, Node-free) — no manual venv or pip steps required.
 
 Dashboard: **http://127.0.0.1:8899** (also `make dashboard`).
+
+---
+
+## Voice notes & Russian practice
+
+An optional `voice` container (compose profile `voice`) adds local speech:
+**faster-whisper** (`large-v3-turbo`, handles Russian/English code-switching)
+for speech-to-text and **Piper** (one Russian + one English voice) for
+text-to-speech. Audio never leaves your box. Telegram bots can't place or take
+calls, so the conversation happens over **voice notes**.
+
+Enable it in `.env`, then `make up`:
+
+```bash
+COMPOSE_PROFILES=voice
+VOICE_URL=http://voice:8000
+VOICE_TOKEN=<make secrets>
+```
+
+First boot downloads the Whisper model (~1.6 GB) into the `voice_models`
+volume; watch `make logs-voice`. Budget ~3 GB RAM. On a slow CPU set
+`WHISPER_MODEL=small`.
+
+**`/russian`** (Telegram):
+
+- `on` schedules a daily session at `RUSSIAN_AT`; `now` starts one right away;
+  `off` cancels the schedule; `status` shows the schedule and flashcard counts.
+- The bot opens with a voice note: a quick quiz on due flashcards, then a
+  short roleplay (topic rotates daily). Reply with voice notes (typing works
+  too). While a session is active every reply is spoken, at `RUSSIAN_SPEED`.
+- Switch to English any time ("how do I say *I'm hedging my bets*?"): it
+  explains, drills it, and saves a flashcard.
+- `stop` (or `RUSSIAN_IDLE_MINUTES` of silence, then your next message) ends
+  the session. A background job grades the transcript, reschedules the quizzed
+  cards (SM-2 spaced repetition), adds cards for your mistakes, and sends a
+  short text summary.
+
+Sessions run in their own thread, so your normal chat history stays clean.
+Cards live in the `russian_cards` table (`make psql`). Grading is based on the
+Whisper transcript, so it judges words and grammar, not accent.
 
 ---
 
@@ -493,6 +539,10 @@ Highlights:
   `DATABASE_URL`).
 - **Search**: `SEARXNG_URL`, `SEARXNG_SECRET`, `BRAVE_API_KEY`.
 - **Sandbox**: `SANDBOX_URL`, `SANDBOX_TOKEN`, `SANDBOX_TIMEOUT`.
+- **Voice**: `COMPOSE_PROFILES=voice`, `VOICE_URL`, `VOICE_TOKEN`,
+  `WHISPER_MODEL`, `TTS_VOICE_RU/EN`, `VOICE_TRANSCRIPTS`.
+- **Russian practice**: `RUSSIAN_AT`, `RUSSIAN_IDLE_MINUTES`,
+  `RUSSIAN_REVIEW_CARDS`, `RUSSIAN_SPEED`.
 - **Prompt**: `AGENT_SYSTEM_PROMPT` (optional full override), `AGENT_NAME`.
 
 ---

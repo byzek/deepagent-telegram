@@ -137,10 +137,18 @@ async def _fire(ctx, senders: dict, job: tuple) -> None:
     if send is None or int(user_id) not in settings.allowed_user_ids(platform):
         log.warning("dropping scheduled job #%s: platform/user no longer enabled", job_id)
         return
-    from app import practice
+    from app import practice, russian
 
-    thread = None
-    if prompt == practice.SENTINEL:
+    thread, voice = None, False
+    try:
+        special = await russian.scheduled(ctx, platform, user_id, chat_id, prompt)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("russian job #%s setup failed", job_id)
+        await send(chat_id, Reply(f"Russian session #{job_id} failed to start: {exc}"))
+        return
+    if special:
+        text, thread, voice = special
+    elif prompt == practice.SENTINEL:
         text = practice.practice_turn()
         thread = f"practice:{platform}:{user_id}:{job_id}:{datetime.now(timezone.utc):%Y%m%dT%H%M}"
     else:
@@ -155,6 +163,8 @@ async def _fire(ctx, senders: dict, job: tuple) -> None:
     except Exception as exc:  # noqa: BLE001
         log.exception("scheduled job #%s failed", job_id)
         reply = Reply(f"Scheduled task #{job_id} failed: {exc}")
+    else:
+        reply.voice, reply.speed = voice, settings.russian_speed if voice else 1.0
     await send(chat_id, reply)
 
 

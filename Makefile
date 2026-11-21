@@ -34,7 +34,7 @@ up: preflight ## Build (if needed) and start the whole stack in the background
 	$(COMPOSE) up -d --build
 
 down: ## Stop and remove containers (keeps volumes / data)
-	$(COMPOSE) --profile qdrant down
+	$(COMPOSE) --profile qdrant --profile voice down
 
 build: ## Build images
 	$(COMPOSE) build
@@ -57,15 +57,19 @@ ifeq ($(MEMORY_BACKEND),qdrant)
 endif
 	$(COMPOSE) up -d --build agent
 
+logs-voice: ## Tail the voice (STT/TTS) service logs
+	$(COMPOSE) logs -f --tail=200 voice
+
 pull: ## Pull the latest third-party images (searxng, valkey, tor, postgres)
 	$(COMPOSE) pull
 
 config: ## Render the fully-interpolated compose config
 	$(COMPOSE) config
 
-secrets: ## Print two fresh random secrets for SEARXNG_SECRET / SANDBOX_TOKEN
+secrets: ## Print fresh random secrets for SEARXNG_SECRET / SANDBOX_TOKEN / VOICE_TOKEN
 	@echo "SEARXNG_SECRET=$$(openssl rand -hex 32)"
 	@echo "SANDBOX_TOKEN=$$(openssl rand -hex 32)"
+	@echo "VOICE_TOKEN=$$(openssl rand -hex 32)"
 
 sh-agent: ## Open a shell in the agent container
 	$(COMPOSE) exec agent bash
@@ -109,4 +113,4 @@ export-skills: ## Copy USER_ID's skills (+ sandbox code) into DEST/agent/seed fo
 	@echo "→ exported skills to $(DEST)/agent/seed (memories NOT included)"
 
 nuke: ## DESTRUCTIVE: stop and delete containers AND all volumes/data
-	$(COMPOSE) --profile qdrant down -v
+	$(COMPOSE) --profile qdrant --profile voice down -v

@@ -8,6 +8,7 @@
 #   searxng   Private metasearch engine (primary web search)
 #   tor       SOCKS5 proxy for optional CAPTCHA/rate-limit evasion
 #   sandbox   Isolated code-execution service driven by the agent
+#   voice     OPTIONAL (profile 'voice'): Whisper STT + Piper TTS for voice notes
 #
 # Bring it up with:  docker compose up -d --build
 # =============================================================================
@@ -26,6 +27,7 @@ volumes:
   valkeydata:
   sandbox_workspace:
   qdrantdata:
+  voice_models:
 
 services:
   # ---------------------------------------------------------------------------
@@ -160,6 +162,37 @@ services:
       - qdrantdata:/qdrant/storage
     networks: [agentnet]
     security_opt: ["no-new-privileges:true"]
+
+  # ---------------------------------------------------------------------------
+  # Voice — OPTIONAL speech service (Whisper STT + Piper TTS). Only started with
+  # the 'voice' profile (COMPOSE_PROFILES=voice in .env). Internal-only, no ports.
+  # The Whisper model (~1.6 GB for large-v3-turbo) downloads into voice_models
+  # on first boot; after that it runs fully offline.
+  # ---------------------------------------------------------------------------
+  voice:
+    build: ./voice
+    <<: *restart
+    profiles: ["voice"]
+    environment:
+      VOICE_TOKEN: ${VOICE_TOKEN}
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3-turbo}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      TTS_VOICE_RU: ${TTS_VOICE_RU:-ru_RU-irina-medium}
+      TTS_VOICE_EN: ${TTS_VOICE_EN:-en_US-amy-medium}
+    volumes:
+      - voice_models:/models
+    networks: [agentnet]
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    mem_limit: ${VOICE_MEM_LIMIT:-6g}
+    cpus: ${VOICE_CPUS:-4.0}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   # ---------------------------------------------------------------------------
   # Dashboard — local metrics UI (read-only over Postgres). localhost-only.
