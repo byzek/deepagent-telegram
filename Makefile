@@ -1,6 +1,7 @@
 # Convenience wrapper around docker compose. `make help` lists targets.
 .DEFAULT_GOAL := help
 COMPOSE := docker compose
+comma := ,
 
 # Detect the selected memory backend from .env (default pgvector) so we can
 # guide you in real time when a target/backend combination is wrong.
@@ -12,7 +13,10 @@ endif
 # When qdrant is the backend, auto-enable its compose profile for EVERY target
 # so `make up` / `make smoke` "just work" without a special command.
 ifeq ($(MEMORY_BACKEND),qdrant)
-export COMPOSE_PROFILES := qdrant
+# Merge with COMPOSE_PROFILES from .env (e.g. voice): an exported value would
+# otherwise override .env and silently drop those profiles.
+ENV_PROFILES := $(strip $(shell grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | tail -1 | cut -d= -f2-))
+export COMPOSE_PROFILES := $(if $(ENV_PROFILES),$(ENV_PROFILES)$(comma))qdrant
 endif
 
 .PHONY: help up down build rebuild logs logs-agent ps restart pull \
