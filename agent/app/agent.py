@@ -21,6 +21,7 @@ from app.config import settings
 from app.prompt import system_prompt
 from app.tools import (
     build_deliberate_tools,
+    build_file_tools,
     build_image_tools,
     build_memory_tools,
     build_network_tools,
@@ -175,6 +176,7 @@ def build_tools(pool) -> list:
         *build_skill_tools(),
         *build_schedule_tools(pool),
         *build_image_tools(),
+        *build_file_tools(),
         *build_network_tools(pool),
         *build_russian_tools(pool),
         *build_deliberate_tools(),

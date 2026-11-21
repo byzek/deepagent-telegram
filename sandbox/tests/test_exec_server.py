@@ -62,6 +62,23 @@ def test_per_call_timeout_can_shorten():
     assert time.monotonic() - start < 3
 
 
+def test_read_file_returns_raw_bytes():
+    data = bytes(range(256)) * 1000  # well past MAX_OUTPUT, binary
+    with open(os.path.join(exec_server.WORKDIR, "blob.bin"), "wb") as f:
+        f.write(data)
+    assert exec_server._read_file("blob.bin") == data
+    assert exec_server._read_file(os.path.join(exec_server.WORKDIR, "blob.bin")) == data
+
+
+def test_read_file_refuses_paths_outside_workspace():
+    for bad in ("/etc/passwd", "../../etc/passwd"):
+        try:
+            exec_server._read_file(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad} was readable")
+
+
 def _main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failures = 0

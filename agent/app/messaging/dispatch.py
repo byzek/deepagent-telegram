@@ -17,6 +17,8 @@ from app.agent import Context
 from app.config import settings
 from app.deliberate import split_trigger, wrap_turn
 from app.metrics import TurnMetrics, write_turn
+from app.tools import files
+from app.tools.files import Attachment
 from app.tools.image import outbox
 
 log = logging.getLogger(__name__)
@@ -29,6 +31,7 @@ class Reply:
     # Speak the reply as a voice note where the platform supports it.
     voice: bool = False
     speed: float = 1.0
+    files: list[Attachment] = field(default_factory=list)
 
 
 def user_content(text: str, images) -> str | list[dict]:
@@ -81,7 +84,9 @@ async def handle_turn(
     # actually producing output; this is the absolute safety ceiling for the
     # whole turn regardless of activity. 0 disables it (wait indefinitely).
     generated: list[bytes] = []
+    attached: list[Attachment] = []
     token = outbox.set(generated)
+    ftoken = files.outbox.set(attached)
     try:
         result = await asyncio.wait_for(
             ctx.agent.ainvoke(
@@ -92,8 +97,9 @@ async def handle_turn(
             timeout=settings.llm_hard_timeout or None,
         )
     finally:
+        files.outbox.reset(ftoken)
         outbox.reset(token)
-    reply = Reply(extract_text(result), generated)
+    reply = Reply(extract_text(result), generated, files=attached)
 
     try:
         await write_turn(

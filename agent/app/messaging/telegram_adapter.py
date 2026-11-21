@@ -181,14 +181,36 @@ async def _speak(send_voice, reply) -> bool:
         return False
 
 
-async def _deliver(message, send_photo, reply, send_voice=None) -> None:
+async def send_attachment(bot, chat_id, att) -> None:
+    """Upload one agent attachment with the matching Bot API method."""
+    caption = att.caption[:1024] or None
+    if att.kind == "photo":
+        await bot.send_photo(chat_id, photo=att.data, caption=caption)
+    elif att.kind == "voice":
+        await bot.send_voice(chat_id, voice=att.data, caption=caption)
+    elif att.kind == "audio":
+        await bot.send_audio(chat_id, audio=att.data, filename=att.filename, caption=caption)
+    elif att.kind == "video":
+        await bot.send_video(chat_id, video=att.data, filename=att.filename, caption=caption)
+    else:
+        await bot.send_document(chat_id, document=att.data, filename=att.filename, caption=caption)
+
+
+async def _deliver(message, send_photo, reply, send_voice=None, send_file=None) -> None:
     """Send the reply (as a voice note when requested and possible, plus the
-    text unless transcripts are off), then each generated image as a photo."""
+    text unless transcripts are off), then each generated image as a photo and
+    each attachment the agent queued."""
     spoke = bool(reply.voice and send_voice and voice.enabled() and await _speak(send_voice, reply))
-    if (reply.text or not reply.images) and not (spoke and not settings.voice_transcripts):
+    if (reply.text or not (reply.images or reply.files)) and not (spoke and not settings.voice_transcripts):
         await _reply_markdown(message, reply.text)
     for data in reply.images:
         await send_photo(photo=data)
+    for att in reply.files if send_file else ():
+        try:
+            await send_file(att)
+        except Exception as exc:  # noqa: BLE001 - one bad file shouldn't drop the rest
+            log.exception("failed to send attachment %s", att.filename)
+            await _send(message, f"Couldn't send {att.filename}: {exc}")
 
 
 def pick_photo(sizes, max_side: int = _PHOTO_MAX_SIDE):
@@ -226,7 +248,8 @@ async def _run_turn(update: Update, context: ContextTypes.DEFAULT_TYPE,
         stop.set()
         await typing
 
-    await _deliver(update.message, update.message.reply_photo, reply, update.message.reply_voice)
+    await _deliver(update.message, update.message.reply_photo, reply, update.message.reply_voice,
+                   functools.partial(send_attachment, context.bot, chat_id))
 
 
 async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -325,6 +348,7 @@ async def send(app: Application, chat_id, reply) -> None:
         functools.partial(app.bot.send_photo, int(chat_id)),
         reply,
         functools.partial(app.bot.send_voice, int(chat_id)),
+        functools.partial(send_attachment, app.bot, int(chat_id)),
     )
 
 

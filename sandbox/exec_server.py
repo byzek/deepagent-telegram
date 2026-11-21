@@ -28,6 +28,25 @@ TIMEOUT = int(os.environ.get("SANDBOX_TIMEOUT", "120"))
 MAX_TIMEOUT = int(os.environ.get("SANDBOX_MAX_TIMEOUT", "3600"))
 WORKDIR = os.environ.get("SANDBOX_WORKDIR", "/workspace")
 MAX_OUTPUT = 60_000  # chars per stream returned to the model
+MAX_FILE = 50 * 1024 * 1024  # Telegram's bot upload ceiling
+
+
+def _resolve(path: str) -> str:
+    """Absolute real path of `path` (relative to WORKDIR) if it stays inside
+    WORKDIR, else raise ValueError."""
+    root = os.path.realpath(WORKDIR)
+    full = os.path.realpath(os.path.join(root, path))
+    if os.path.commonpath([root, full]) != root:
+        raise ValueError("path outside workspace")
+    return full
+
+
+def _read_file(path: str) -> bytes:
+    full = _resolve(path)
+    if os.path.getsize(full) > MAX_FILE:
+        raise ValueError(f"file larger than {MAX_FILE // (1024 * 1024)} MB")
+    with open(full, "rb") as f:
+        return f.read()
 
 
 def _read_clipped(f) -> str:
@@ -89,7 +108,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/execute":
+        if self.path not in ("/execute", "/read"):
             self._json(404, {"error": "not found"})
             return
 
@@ -101,6 +120,27 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             data = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, TypeError) as exc:
+            self._json(400, {"error": f"bad request: {exc}"})
+            return
+
+        if self.path == "/read":
+            try:
+                body = _read_file(str(data["path"]))
+            except FileNotFoundError:
+                self._json(404, {"error": "file_not_found"})
+                return
+            except (KeyError, ValueError, OSError) as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        try:
             command = data["command"]
             timeout = int(data["timeout"]) if data.get("timeout") else None
         except (ValueError, KeyError, TypeError) as exc:

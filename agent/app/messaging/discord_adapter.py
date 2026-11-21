@@ -92,11 +92,18 @@ class _Client(discord.Client):
 
 
 async def _deliver(channel, reply) -> None:
-    if reply.text or not reply.images:
+    if reply.text or not (reply.images or reply.files):
         for part in chunk(reply.text, _LIMIT):
             await channel.send(part)
     for i, data in enumerate(reply.images):
         await channel.send(file=discord.File(io.BytesIO(data), filename=f"image-{i + 1}.jpg"))
+    for att in reply.files:
+        try:
+            await channel.send(att.caption or None,
+                               file=discord.File(io.BytesIO(att.data), filename=att.filename))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("failed to send attachment %s", att.filename)
+            await channel.send(f"Couldn't send {att.filename}: {exc}")
 
 
 async def start(ctx):
