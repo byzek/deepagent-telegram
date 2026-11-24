@@ -139,6 +139,12 @@ class Settings:
     practice_every_minutes: int = int(os.environ.get("PRACTICE_EVERY_MINUTES", "1440"))
     practice_at: str = os.environ.get("PRACTICE_AT", "03:00")
 
+    # --- Reflection (learn from feedback, /reflect) ------------------------------
+    reflect_every_minutes: int = int(os.environ.get("REFLECT_EVERY_MINUTES", "1440"))
+    reflect_at: str = os.environ.get("REFLECT_AT", "04:00")
+    reflect_recent_turns: int = int(os.environ.get("REFLECT_RECENT_TURNS", "20"))
+    reflect_max_chars: int = int(os.environ.get("REFLECT_MAX_CHARS", "8000"))
+
     # --- Voice (optional `voice` service: Whisper STT + Piper TTS) ------------
     # Empty VOICE_URL = voice notes are politely declined and replies stay text.
     voice_url: str = os.environ.get("VOICE_URL", "").rstrip("/")

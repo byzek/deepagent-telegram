@@ -16,10 +16,11 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    MessageReactionHandler,
     filters,
 )
 
-from app import practice, russian, threads, voice
+from app import practice, reflect, russian, threads, voice
 from app.config import settings
 from app.messaging.dispatch import chunk, handle_turn
 
@@ -67,6 +68,8 @@ async def _help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/deliberate <question> — best-of-N answer for hard questions "
         "(or start any message with the word \"deliberate\")\n"
         "/practice on|off|now|status — nightly skill drills\n"
+        "/feedback [+|-] <text> — tell me what was good/wrong (reply to a message to target it; 👍/👎 reactions work too)\n"
+        "/reflect on|off|now|log|undo — learn from your feedback\n"
         "/russian on|off|now|stop|status — spoken Russian practice (voice notes)\n"
         "Send a voice note any time and I'll answer out loud.\n"
         "/help — this message"
@@ -112,15 +115,50 @@ async def _russian(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(msg)
 
 
-async def _send(target, text: str, *, parse_mode=None) -> None:
+async def _feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    replied = update.message.reply_to_message
+    msg = await reflect.feedback_command(
+        _ctx(context).pool, f"{PLATFORM}:{update.effective_user.id}", update.effective_chat.id,
+        " ".join(context.args or []), replied.message_id if replied else None,
+    )
+    await update.message.reply_text(msg)
+
+
+async def _reflect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _authorized(update):
+        return
+    ctx = _ctx(context)
+    msg = await reflect.command(
+        ctx.pool, ctx.store, PLATFORM, str(update.effective_user.id),
+        str(update.effective_chat.id), " ".join(context.args or []),
+    )
+    await update.message.reply_text(msg)
+
+
+async def _on_reaction(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """👍/👎 on a bot reply becomes feedback for the turn that produced it."""
+    r = update.message_reaction
+    if not r or not r.user or r.user.id not in settings.allowed_telegram_user_ids:
+        return
+    rating = reflect.reaction_rating(getattr(x, "emoji", "") for x in r.new_reaction)
+    if not rating:
+        return
+    pool, uid = _ctx(context).pool, f"{PLATFORM}:{r.user.id}"
+    turn = await reflect.find_turn(pool, uid, r.chat.id, r.message_id)
+    if turn is not None:
+        await reflect.add_feedback(pool, uid, turn, rating)
+
+
+async def _send(target, text: str, *, parse_mode=None):
     """Send one message, retrying transient Telegram network hiccups instead of
     letting a flaky send bubble up as a failed turn. `target` is a Message to
     reply to, or a send coroutine (e.g. bot.send_message bound to a chat)."""
     send = target.reply_text if isinstance(target, Message) else target
     for attempt in range(3):
         try:
-            await send(text, parse_mode=parse_mode)
-            return
+            return await send(text, parse_mode=parse_mode)
         except RetryAfter as exc:
             await asyncio.sleep(getattr(exc, "retry_after", 1) + 0.5)
         except (TimedOut, NetworkError):
@@ -129,17 +167,22 @@ async def _send(target, text: str, *, parse_mode=None) -> None:
             await asyncio.sleep(1.0 * (attempt + 1))
 
 
-async def _reply_markdown(message, text: str) -> None:
+async def _reply_markdown(message, text: str) -> list[int]:
     """Render the agent's Markdown as Telegram MarkdownV2, converting per chunk
     so each message is self-contained. If Telegram rejects the entities (or the
-    message is too long), fall back to sending that chunk as plain text."""
+    message is too long), fall back to sending that chunk as plain text.
+    Returns the sent message ids."""
+    ids = []
     for raw in chunk(text, _CHUNK):
         try:
             md = telegramify_markdown.markdownify(raw)
-            await _send(message, md, parse_mode=ParseMode.MARKDOWN_V2)
+            sent = await _send(message, md, parse_mode=ParseMode.MARKDOWN_V2)
         except BadRequest:
             log.warning("MarkdownV2 rejected by Telegram; sending plain text")
-            await _send(message, raw)
+            sent = await _send(message, raw)
+        if sent is not None and getattr(sent, "message_id", None) is not None:
+            ids.append(sent.message_id)
+    return ids
 
 
 async def _keep_typing(bot, chat_id: int, stop: asyncio.Event,
@@ -196,13 +239,14 @@ async def send_attachment(bot, chat_id, att) -> None:
         await bot.send_document(chat_id, document=att.data, filename=att.filename, caption=caption)
 
 
-async def _deliver(message, send_photo, reply, send_voice=None, send_file=None) -> None:
+async def _deliver(message, send_photo, reply, send_voice=None, send_file=None) -> list[int]:
     """Send the reply (as a voice note when requested and possible, plus the
     text unless transcripts are off), then each generated image as a photo and
-    each attachment the agent queued."""
+    each attachment the agent queued. Returns the text message ids."""
+    ids: list[int] = []
     spoke = bool(reply.voice and send_voice and voice.enabled() and await _speak(send_voice, reply))
     if (reply.text or not (reply.images or reply.files)) and not (spoke and not settings.voice_transcripts):
-        await _reply_markdown(message, reply.text)
+        ids = await _reply_markdown(message, reply.text)
     for data in reply.images:
         await send_photo(photo=data)
     for att in reply.files if send_file else ():
@@ -211,6 +255,7 @@ async def _deliver(message, send_photo, reply, send_voice=None, send_file=None) 
         except Exception as exc:  # noqa: BLE001 - one bad file shouldn't drop the rest
             log.exception("failed to send attachment %s", att.filename)
             await _send(message, f"Couldn't send {att.filename}: {exc}")
+    return ids
 
 
 def pick_photo(sizes, max_side: int = _PHOTO_MAX_SIDE):
@@ -248,8 +293,14 @@ async def _run_turn(update: Update, context: ContextTypes.DEFAULT_TYPE,
         stop.set()
         await typing
 
-    await _deliver(update.message, update.message.reply_photo, reply, update.message.reply_voice,
-                   functools.partial(send_attachment, context.bot, chat_id))
+    ids = await _deliver(update.message, update.message.reply_photo, reply, update.message.reply_voice,
+                         functools.partial(send_attachment, context.bot, chat_id))
+    if not thread:
+        try:
+            await reflect.record_turn(ctx.pool, f"{PLATFORM}:{update.effective_user.id}", chat_id,
+                                      text, reply.text, ids)
+        except Exception:  # noqa: BLE001 - logging feedback context must never break a reply
+            log.exception("failed to record turn")
 
 
 async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -325,6 +376,9 @@ def _build(ctx) -> Application:
     app.add_handler(CommandHandler("practice", _practice))
     app.add_handler(CommandHandler("russian", _russian))
     app.add_handler(CommandHandler("deliberate", _on_deliberate))
+    app.add_handler(CommandHandler("feedback", _feedback))
+    app.add_handler(CommandHandler("reflect", _reflect))
+    app.add_handler(MessageReactionHandler(_on_reaction))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _on_message))
     app.add_handler(MessageHandler(filters.PHOTO, _on_photo))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, _on_voice))

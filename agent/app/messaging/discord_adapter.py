@@ -12,7 +12,7 @@ import logging
 
 import discord
 
-from app import practice, threads
+from app import practice, reflect, threads
 from app.config import settings
 from app.messaging.dispatch import chunk, handle_turn
 
@@ -62,7 +62,8 @@ class _Client(discord.Client):
                 "I search the web, run code in a sandbox, and remember things "
                 "across conversations. In servers, @mention me. Commands: "
                 "!reset (fresh conversation), !whoami, "
-                "!practice on|off|now|status (nightly skill drills). Start a "
+                "!practice on|off|now|status (nightly skill drills), "
+                "!feedback [+|-] <text>, !reflect on|off|now|log|undo. Start a "
                 "message with \"deliberate\" for a best-of-N answer."
             )
             return
@@ -74,6 +75,19 @@ class _Client(discord.Client):
             await message.channel.send(await practice.command(
                 self.ctx.pool, PLATFORM, str(uid), str(message.channel.id),
                 content[len("!practice"):],
+            ))
+            return
+        if content == "!feedback" or content.startswith("!feedback "):
+            ref = message.reference.message_id if message.reference else None
+            await message.channel.send(await reflect.feedback_command(
+                self.ctx.pool, f"{PLATFORM}:{uid}", message.channel.id,
+                content[len("!feedback"):], ref,
+            ))
+            return
+        if content == "!reflect" or content.startswith("!reflect "):
+            await message.channel.send(await reflect.command(
+                self.ctx.pool, self.ctx.store, PLATFORM, str(uid), str(message.channel.id),
+                content[len("!reflect"):],
             ))
             return
         if not content:
@@ -88,13 +102,19 @@ class _Client(discord.Client):
             log.exception("agent failed")
             await message.channel.send(f"Something went wrong: {exc}")
             return
-        await _deliver(message.channel, reply)
+        ids = await _deliver(message.channel, reply)
+        try:
+            await reflect.record_turn(self.ctx.pool, f"{PLATFORM}:{uid}", message.channel.id,
+                                      content, reply.text, ids)
+        except Exception:  # noqa: BLE001
+            log.exception("failed to record turn")
 
 
-async def _deliver(channel, reply) -> None:
+async def _deliver(channel, reply) -> list[int]:
+    ids = []
     if reply.text or not (reply.images or reply.files):
         for part in chunk(reply.text, _LIMIT):
-            await channel.send(part)
+            ids.append((await channel.send(part)).id)
     for i, data in enumerate(reply.images):
         await channel.send(file=discord.File(io.BytesIO(data), filename=f"image-{i + 1}.jpg"))
     for att in reply.files:
@@ -104,6 +124,7 @@ async def _deliver(channel, reply) -> None:
         except Exception as exc:  # noqa: BLE001
             log.exception("failed to send attachment %s", att.filename)
             await channel.send(f"Couldn't send {att.filename}: {exc}")
+    return ids
 
 
 async def start(ctx):

@@ -137,7 +137,16 @@ async def _fire(ctx, senders: dict, job: tuple) -> None:
     if send is None or int(user_id) not in settings.allowed_user_ids(platform):
         log.warning("dropping scheduled job #%s: platform/user no longer enabled", job_id)
         return
-    from app import practice, russian
+    from app import practice, reflect, russian
+
+    if prompt == reflect.SENTINEL:
+        try:
+            text = await reflect.run(ctx.pool, ctx.store, f"{platform}:{user_id}")
+        except Exception as exc:  # noqa: BLE001
+            log.exception("reflection job #%s failed", job_id)
+            text = f"Reflection #{job_id} failed: {exc}"
+        await send(chat_id, Reply(text))
+        return
 
     thread, voice = None, False
     try:

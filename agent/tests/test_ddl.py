@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import russian, scheduler, threads  # noqa: E402
+from app import reflect, russian, scheduler, threads  # noqa: E402
 
 
 class _PreparingConn:
@@ -53,6 +53,10 @@ def test_threads_ddl_is_not_prepared():
 
 def test_russian_ddl_is_not_prepared():
     _assert_runs_full_ddl(russian.ensure_table, russian.DDL)
+
+
+def test_reflect_ddl_is_not_prepared():
+    _assert_runs_full_ddl(reflect.ensure_table, reflect.DDL)
 
 
 if __name__ == "__main__":

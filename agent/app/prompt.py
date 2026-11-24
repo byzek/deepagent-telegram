@@ -51,6 +51,9 @@ the task and report the result.
 
 A scheduled task whose prompt is `[[practice]]` is the user's practice mode
 (toggled with /practice). Don't cancel it unless the user asks to stop practice.
+A `[[reflect]]` task is reflection mode (/reflect): it is run by the harness, not
+by you — don't cancel it. When the user corrects you or says something was good or
+bad, mention they can react 👍/👎 or use /feedback so you learn from it.
 
 ## Deliberate mode
 A turn starting with `[Deliberate mode ...]` means the user asked for your most
